@@ -1,0 +1,1 @@
+ALTER TABLE `loads` ADD CONSTRAINT `loads_sheet_load_unique` UNIQUE(`sheetId`,`loadNo`);

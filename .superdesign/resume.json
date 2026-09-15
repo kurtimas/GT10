@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "/scale/:sheetId/cycle": {
+      "targetKind": "new-ui",
+      "projectId": "8dc0f732-d499-4c05-9096-ef64475f5c22",
+      "activeDraftId": "c795118d-5b69-4173-bfb2-e606c657f5a1",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/briefs/truck-cycle-wizard.md",
+        ".superdesign/design-system.md",
+        "shared/src/index.css",
+        "app/tailwind.config.js",
+        "app/src/components/Layout.tsx",
+        "app/src/pages/Scale.tsx",
+        "shared/src/components/ui/button.tsx",
+        "shared/src/components/ui/badge.tsx",
+        "shared/src/lib/utils.ts"
+      ],
+      "fingerprints": {
+        ".superdesign/briefs/truck-cycle-wizard.md": "bd07a1e20205ca2c1ebf0012f74ad03d2a9b6e194cfc69be9fdc3588194d4263",
+        ".superdesign/design-system.md": "b13fc45a6280011be89e48851e2a9e20f3349990998f9b5de4ba545843891530",
+        "shared/src/index.css": "5b5accedd74ae0cc9342fc2015b272e46276f3bf3c30369de3a087af46656c5c",
+        "app/tailwind.config.js": "d5b3a3d6437a3df07bb440ccaac7049b097ad46a2f8538031e3228267a4f936c",
+        "app/src/components/Layout.tsx": "befd9b3bda85a23b6e98dea76f968b9a911e92b12f80d6fba1d51760f3d9d938",
+        "app/src/pages/Scale.tsx": "06aee450b5fbff56ef1db47b95f2a796043865dfeda82d8bc267057f459dd81b",
+        "shared/src/components/ui/button.tsx": "030f3e15d94dc75a27ee27731170b441b323a9333f0ce700e0234190f4bf8d8c",
+        "shared/src/components/ui/badge.tsx": "9464c9802bdc243d8c01f025e7a1717d22d513b28ca15902a6f0cb53f1c65a1e",
+        "shared/src/lib/utils.ts": "c49b8741634ff9c779fcb3501b84fb2cf00518bb0b4d651abe3bb857e3585c08"
+      },
+      "components": [
+        {
+          "name": "AppShell",
+          "id": "b9b6f2aa-0cba-4840-a4db-4a02686e3eb3",
+          "sourcePath": "app/src/components/Layout.tsx"
+        }
+      ],
+      "drafts": {
+        "c795118d-5b69-4173-bfb2-e606c657f5a1": {
+          "title": "Scale — Truck Cycle Wizard (Step 4)",
+          "visualDirection": "Harvest Modern (cream/forest/wheat-gold), guided 5-step weigh flow shown at step 4 WEIGH OUT; v1 was an off-palette crimson draft, v2 is the on-spec rebuild",
+          "currentVersion": 2
+        }
+      },
+      "updatedAt": "2026-09-11T00:00:00Z"
+    },
+    "/scale/yard": {
+      "targetKind": "new-ui",
+      "projectId": "8dc0f732-d499-4c05-9096-ef64475f5c22",
+      "activeDraftId": "cfa0582d-520c-48b5-a717-713945caa6f6",
+      "sourceTarget": "/scale/:sheetId/cycle",
+      "sourceDraftId": "c795118d-5b69-4173-bfb2-e606c657f5a1",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/briefs/live-yard-board.md",
+        ".superdesign/design-system.md",
+        "shared/src/index.css",
+        "app/src/components/Layout.tsx",
+        "app/src/pages/Scale.tsx",
+        "shared/src/lib/utils.ts"
+      ],
+      "fingerprints": {
+        ".superdesign/briefs/live-yard-board.md": "151deacda4b78bf233cab072c8a312fdc6e33a41b6126588f079d993815966cc",
+        ".superdesign/design-system.md": "b13fc45a6280011be89e48851e2a9e20f3349990998f9b5de4ba545843891530",
+        "shared/src/index.css": "5b5accedd74ae0cc9342fc2015b272e46276f3bf3c30369de3a087af46656c5c",
+        "app/src/components/Layout.tsx": "befd9b3bda85a23b6e98dea76f968b9a911e92b12f80d6fba1d51760f3d9d938",
+        "app/src/pages/Scale.tsx": "06aee450b5fbff56ef1db47b95f2a796043865dfeda82d8bc267057f459dd81b",
+        "shared/src/lib/utils.ts": "c49b8741634ff9c779fcb3501b84fb2cf00518bb0b4d651abe3bb857e3585c08"
+      },
+      "components": [
+        {
+          "name": "AppShell",
+          "id": "b9b6f2aa-0cba-4840-a4db-4a02686e3eb3",
+          "sourcePath": "app/src/components/Layout.tsx"
+        }
+      ],
+      "drafts": {
+        "cfa0582d-520c-48b5-a717-713945caa6f6": {
+          "title": "Live Yard Board — /scale/yard",
+          "visualDirection": "Harvest Modern ops board: KPI strip, trucks-on-the-lot rows (at scale / dumping / overdue), empty scale instrument, bin fill bars, activity ticker",
+          "parentDraftId": "c795118d-5b69-4173-bfb2-e606c657f5a1",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-09-11T00:00:00Z"
+    }
+  }
+}

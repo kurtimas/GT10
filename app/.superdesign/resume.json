@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "/": {
+      "targetKind": "existing-ui",
+      "projectId": "8dc0f732-d499-4c05-9096-ef64475f5c22",
+      "baselineDraftId": "8ebcc49d-2fe5-43c6-82a9-2a9c97b8856b",
+      "activeDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+      "designSystemPath": ".superdesign/design-system.md",
+      "referenceIds": [
+        "cb993de7-1771-4734-a6ee-bada0e113b43"
+      ],
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/components/Layout.tsx",
+        "src/pages/Dashboard.tsx",
+        "src/index.css",
+        "src/components/ui/button.tsx",
+        "src/components/ui/card.tsx",
+        "src/components/ui/badge.tsx",
+        "src/components/ui/input.tsx",
+        "src/components/ui/label.tsx",
+        "src/components/ui/slider.tsx"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "2e23db6dce4a9c425dbf74bcfd5953b562d045bf983f17915e892c4b12c6da19",
+        "src/components/Layout.tsx": "728a796b1be8ced253f34202e30a9695cefa979698abb6fc16a090cb8928a9e4",
+        "src/pages/Dashboard.tsx": "cb699b46a5cbd4b3d5804e3c1be61930cedae535e4d913b791eb75792b3138b4",
+        "src/index.css": "bbd7573da6bc964729590562227b24559e1c81a8d95ebf417e6aafeb01c33556",
+        "src/components/ui/button.tsx": "22c0048282b9d3e27a8f1725cb367fa21b4672a396b6336edfc182f12c16ac45",
+        "src/components/ui/card.tsx": "394cd0da43df5ffc857a24b1a6b6e884b2b475c06d5d63cfd8b4661f2276be85",
+        "src/components/ui/badge.tsx": "d98430b2dda824cb2d0f8c15b51ed8378a4a6f372a17de765b4e2b2a253dd884",
+        "src/components/ui/input.tsx": "1c678e014d5ceb3adb7af962c92daa87942c1c3c556762f1f0610ac28abc7ca7",
+        "src/components/ui/label.tsx": "2b525af16feb9c9efb8da26403b4dbee8fc2da41834272d306495a421b46baf6",
+        "src/components/ui/slider.tsx": "5ee4156c0e9a0bfb12fbbdd80a881e5b957e4e4801e7c9082b5d6f7062a7dbbf"
+      },
+      "components": [],
+      "drafts": {
+        "8ebcc49d-2fe5-43c6-82a9-2a9c97b8856b": {
+          "title": "Current Dashboard (console dark)",
+          "visualDirection": "pixel-perfect reproduction of current console-dark dashboard (baseline)",
+          "currentVersion": 1
+        },
+        "eabe5800-4867-40f2-b6ee-4c257a174c4c": {
+          "title": "Midnight Ops Redesign",
+          "visualDirection": "dark console evolved: deeper near-black, premium panels, gold hairlines, stronger readout",
+          "parentDraftId": "8ebcc49d-2fe5-43c6-82a9-2a9c97b8856b",
+          "currentVersion": 1
+        },
+        "9c3ba73d-6b6b-4319-8a96-79ca128dc9a4": {
+          "title": "Daylight Ops Redesign",
+          "visualDirection": "light ops identity: paper-white, white cards, light sidebar, dark inset readout instrument",
+          "parentDraftId": "8ebcc49d-2fe5-43c6-82a9-2a9c97b8856b",
+          "currentVersion": 1
+        },
+        "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b": {
+          "title": "Harvest Modern Dashboard",
+          "visualDirection": "agrarian modern: forest green + wheat gold + cream, green sidebar, gold WEIGH buttons",
+          "parentDraftId": "8ebcc49d-2fe5-43c6-82a9-2a9c97b8856b",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-08-26T21:55:00Z"
+    },
+    "/sheets": {
+      "targetKind": "new-ui",
+      "projectId": "8dc0f732-d499-4c05-9096-ef64475f5c22",
+      "activeDraftId": "a2ba6829-9ee1-4a20-9978-871effab0812",
+      "designSystemPath": ".superdesign/design-system.md",
+      "sourceTarget": "/",
+      "sourceDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/index.css",
+        "src/components/Layout.tsx"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "2e23db6dce4a9c425dbf74bcfd5953b562d045bf983f17915e892c4b12c6da19",
+        "src/index.css": "bbd7573da6bc964729590562227b24559e1c81a8d95ebf417e6aafeb01c33556",
+        "src/components/Layout.tsx": "728a796b1be8ced253f34202e30a9695cefa979698abb6fc16a090cb8928a9e4"
+      },
+      "components": [],
+      "drafts": {
+        "a2ba6829-9ee1-4a20-9978-871effab0812": {
+          "title": "Weight Sheets",
+          "visualDirection": "Harvest Modern (forest green + wheat gold + cream)",
+          "parentDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-08-26T22:05:00Z"
+    },
+    "/bins": {
+      "targetKind": "new-ui",
+      "projectId": "8dc0f732-d499-4c05-9096-ef64475f5c22",
+      "activeDraftId": "ab5fa0bd-e8eb-4245-b0c9-96666cafe95b",
+      "designSystemPath": ".superdesign/design-system.md",
+      "sourceTarget": "/",
+      "sourceDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/index.css",
+        "src/components/Layout.tsx"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "2e23db6dce4a9c425dbf74bcfd5953b562d045bf983f17915e892c4b12c6da19",
+        "src/index.css": "bbd7573da6bc964729590562227b24559e1c81a8d95ebf417e6aafeb01c33556",
+        "src/components/Layout.tsx": "728a796b1be8ced253f34202e30a9695cefa979698abb6fc16a090cb8928a9e4"
+      },
+      "components": [],
+      "drafts": {
+        "ab5fa0bd-e8eb-4245-b0c9-96666cafe95b": {
+          "title": "Bins",
+          "visualDirection": "Harvest Modern (forest green + wheat gold + cream)",
+          "parentDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-08-26T22:05:00Z"
+    },
+    "/people": {
+      "targetKind": "new-ui",
+      "projectId": "8dc0f732-d499-4c05-9096-ef64475f5c22",
+      "activeDraftId": "c6e813a2-f9d7-4929-93ad-0151d9008555",
+      "designSystemPath": ".superdesign/design-system.md",
+      "sourceTarget": "/",
+      "sourceDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/index.css",
+        "src/components/Layout.tsx"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "2e23db6dce4a9c425dbf74bcfd5953b562d045bf983f17915e892c4b12c6da19",
+        "src/index.css": "bbd7573da6bc964729590562227b24559e1c81a8d95ebf417e6aafeb01c33556",
+        "src/components/Layout.tsx": "728a796b1be8ced253f34202e30a9695cefa979698abb6fc16a090cb8928a9e4"
+      },
+      "components": [],
+      "drafts": {
+        "c6e813a2-f9d7-4929-93ad-0151d9008555": {
+          "title": "Farmers & Lots",
+          "visualDirection": "Harvest Modern (forest green + wheat gold + cream)",
+          "parentDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-08-26T22:05:00Z"
+    },
+    "/reports": {
+      "targetKind": "new-ui",
+      "projectId": "8dc0f732-d499-4c05-9096-ef64475f5c22",
+      "activeDraftId": "a96528e7-7c60-40cb-8cf9-b55b9c69944d",
+      "designSystemPath": ".superdesign/design-system.md",
+      "sourceTarget": "/",
+      "sourceDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/index.css",
+        "src/components/Layout.tsx"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "2e23db6dce4a9c425dbf74bcfd5953b562d045bf983f17915e892c4b12c6da19",
+        "src/index.css": "bbd7573da6bc964729590562227b24559e1c81a8d95ebf417e6aafeb01c33556",
+        "src/components/Layout.tsx": "728a796b1be8ced253f34202e30a9695cefa979698abb6fc16a090cb8928a9e4"
+      },
+      "components": [],
+      "drafts": {
+        "a96528e7-7c60-40cb-8cf9-b55b9c69944d": {
+          "title": "Reports",
+          "visualDirection": "Harvest Modern (forest green + wheat gold + cream)",
+          "parentDraftId": "6c7ac4d1-8a2a-444c-82cf-56b1c3a6552b",
+          "currentVersion": 1
+        }
+      },
+      "updatedAt": "2026-08-26T22:05:00Z"
+    }
+  }
+}

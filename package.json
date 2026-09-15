@@ -1,0 +1,19 @@
+{
+  "name": "grain-tracker-v9",
+  "private": true,
+  "version": "9.0.0",
+  "type": "module",
+  "workspaces": [
+    "app",
+    "office"
+  ],
+  "scripts": {
+    "dev:app": "npm run dev --workspace app",
+    "dev:office": "npm run dev --workspace office",
+    "build:app": "npm run build --workspace app",
+    "build:office": "npm run build --workspace office",
+    "test": "npm run test --workspace app && npm run test --workspace office",
+    "check": "npm run check --workspace app && npm run check --workspace office",
+    "backup": "node shared/scripts/backup.mjs"
+  }
+}
