@@ -36,6 +36,9 @@ export const bins = mysqlTable(
     crop: varchar("crop", { length: 64 }).notNull(),
     capacityLbs: int("capacityLbs").notNull(),
     currentLbs: int("currentLbs").notNull().default(0),
+    // Identity-preserved program segregation (Phase A, research #17) —
+    // free-ish tag: conventional | organic | non-gmo | seed | certified | …
+    program: varchar("program", { length: 32 }).notNull().default("conventional"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => ({ siteIdx: index("bins_site_idx").on(t.siteId) }),
@@ -79,6 +82,11 @@ export const lots = mysqlTable(
     crop: varchar("crop", { length: 64 }).notNull(),
     landlordSplitPct: double("landlordSplitPct").notNull().default(0),
     status: mysqlEnum("status", ["OPEN", "CLOSED"]).notNull().default("OPEN"),
+    // Identity-preserved program (Phase A, research #17)
+    program: varchar("program", { length: 32 }).notNull().default("conventional"),
+    // Farm-of-origin sustainability fields (Phase A, research #31) — free text
+    practices: text("practices"),
+    carbonNotes: text("carbonNotes"),
     notes: text("notes"),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
     closedAt: timestamp("closedAt"),
@@ -166,6 +174,12 @@ export const loads = mysqlTable(
     damagePct: double("damagePct"),
     grade: varchar("grade", { length: 32 }),
     farmOrigin: varchar("farmOrigin", { length: 255 }),
+    // remaining grade factors (Phase A, research #3): FM is distinct from
+    // dockage on the USGSA factor grid; sbPct = shrunken & broken kernels
+    foreignMaterialPct: double("foreignMaterialPct"),
+    sbPct: double("sbPct"),
+    // program denormalized from the lot at intake for reporting (Phase A, #17)
+    program: varchar("program", { length: 32 }).notNull().default("conventional"),
     shrinkPct: double("shrinkPct"),
     grossBushels: double("grossBushels"),
     netBushels: double("netBushels"),
@@ -311,6 +325,282 @@ export const auditLog = mysqlTable(
 );
 
 // ---------------------------------------------------------------------------
+// Phase A tables (research feature guide, data-model layer).
+// All are site-scoped where the entity is site-bound, carry createdAt, and
+// mutable records also carry updatedAt so Phase-B audit writes have a clean
+// before/after. Append-only logs (shrink_entries, attachments,
+// bin_grade_overrides) intentionally have no updatedAt.
+// ---------------------------------------------------------------------------
+
+// Grading shrink/dock schedules (#3) — per-crop, editable at the elevator
+// (not hardcoded). siteId null = plant-wide default for the crop; a site row
+// overrides it. Seeded on boot from shared/contracts/grain.ts values.
+export const gradingSchedules = mysqlTable(
+  "grading_schedules",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true }).references(
+      () => sites.id,
+    ),
+    crop: varchar("crop", { length: 64 }).notNull(),
+    // moisture shrink % charged per point above base moisture (1.183 = true
+    // water-removal shrink; many elevators charge 1.3-1.4 — editable)
+    moistureShrinkPerPoint: double("moistureShrinkPerPoint").notNull(),
+    baseMoisturePct: double("baseMoisturePct").notNull(),
+    // invisible handling loss % (research: 0.5% in-and-out rule of thumb)
+    handlingShrinkPct: double("handlingShrinkPct").notNull().default(0),
+    // dockage handling rules, free text (e.g. "deducted 1:1 from gross bu")
+    dockageRules: text("dockageRules"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => ({
+    siteCropIdx: index("grading_sched_site_crop_idx").on(t.siteId, t.crop),
+  }),
+);
+
+// Grade factor definitions with min/max validation ranges (#3) — one row per
+// (crop, grade class, factor); factor ∈ moisturePct | testWeight | dockagePct |
+// damagePct | foreignMaterialPct | sbPct | proteinPct. Seeded with US grade
+// defaults for corn/soybeans/wheat; editable.
+export const gradeFactors = mysqlTable(
+  "grade_factors",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true }).references(
+      () => sites.id,
+    ),
+    crop: varchar("crop", { length: 64 }).notNull(),
+    gradeClass: varchar("gradeClass", { length: 32 }).notNull(), // e.g. "No. 2"
+    factor: varchar("factor", { length: 32 }).notNull(),
+    minValue: double("minValue"),
+    maxValue: double("maxValue"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => ({
+    siteCropIdx: index("grade_factor_site_crop_idx").on(t.siteId, t.crop),
+  }),
+);
+
+// Load splits (#4) — who owns what share of a delivered load (farmer/landlord
+// percentage splits). partyId references farmers.id or landlords.id depending
+// on partyType, so it is deliberately a plain column (no FK possible across
+// two tables). Contract: splits for one load must sum to 100
+// (shared/contracts/splits.ts).
+export const loadSplits = mysqlTable(
+  "load_splits",
+  {
+    id: serial("id").primaryKey(),
+    loadId: bigint("loadId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => loads.id),
+    partyType: varchar("partyType", { length: 16 }).notNull(), // farmer | landlord
+    partyId: bigint("partyId", { mode: "number", unsigned: true }).notNull(),
+    splitPct: double("splitPct").notNull(),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => ({ loadIdx: index("load_splits_load_idx").on(t.loadId) }),
+);
+
+// Bin empty & cleanout records (#12) — genealogy reset points: a cleanout
+// bounds any contamination event. emptiedAt set when the bin was emptied;
+// cleanedAt null until the cleanout is actually done.
+export const binCleanouts = mysqlTable(
+  "bin_cleanouts",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    binId: bigint("binId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => bins.id),
+    emptiedAt: timestamp("emptiedAt").notNull(),
+    cleanedAt: timestamp("cleanedAt"),
+    method: varchar("method", { length: 255 }),
+    note: text("note"),
+    operator: varchar("operator", { length: 255 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => ({
+    siteIdx: index("cleanouts_site_idx").on(t.siteId),
+    binIdx: index("cleanouts_bin_idx").on(t.binId),
+  }),
+);
+
+// Fumigation / treatment logs (#19) — product, dosage, exposure, aeration
+// clearance, applicator; tied to a bin. dosage is free text ("30 tablets",
+// "1.5 g/m³") because units vary by product.
+export const fumigationLogs = mysqlTable(
+  "fumigation_logs",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    binId: bigint("binId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => bins.id),
+    product: varchar("product", { length: 255 }).notNull(),
+    dosage: varchar("dosage", { length: 128 }),
+    appliedAt: timestamp("appliedAt").notNull(),
+    exposureHours: double("exposureHours"),
+    aerationClearedAt: timestamp("aerationClearedAt"),
+    applicator: varchar("applicator", { length: 255 }),
+    note: text("note"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => ({
+    siteIdx: index("fumigation_site_idx").on(t.siteId),
+    binIdx: index("fumigation_bin_idx").on(t.binId),
+  }),
+);
+
+// Certificate registry (#20) — FGIS inspection/weight certs, phyto, origin,
+// fumigation, mycotoxin, non-GMO declarations. type/status are free-ish
+// varchar with contract-level enums (shared/contracts/compliance.ts).
+// fileRef links to an attachment storageRef once uploads exist (Phase B).
+export const certificates = mysqlTable(
+  "certificates",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    type: varchar("type", { length: 32 }).notNull(),
+    certNumber: varchar("certNumber", { length: 128 }).notNull(),
+    issuedAt: timestamp("issuedAt").notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("issued"), // issued | reprinted | void
+    lotId: bigint("lotId", { mode: "number", unsigned: true }).references(() => lots.id),
+    shipmentId: bigint("shipmentId", { mode: "number", unsigned: true }).references(
+      () => shipments.id,
+    ),
+    note: text("note"),
+    fileRef: varchar("fileRef", { length: 255 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => ({
+    siteIdx: index("certificates_site_idx").on(t.siteId),
+    lotIdx: index("certificates_lot_idx").on(t.lotId),
+    shipmentIdx: index("certificates_shipment_idx").on(t.shipmentId),
+  }),
+);
+
+// Lab results (#22) — a lab test bound to the lot / load / bin it certifies.
+// result is value+unit free text ("4.2 ppm", "34.1%"); passFail null = no
+// pass/fail criterion applies. loadId is a plain column (like
+// bin_movements.loadId) — lab results must survive changes to the load.
+export const labResults = mysqlTable(
+  "lab_results",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    sampleDate: timestamp("sampleDate").notNull(),
+    labName: varchar("labName", { length: 255 }),
+    testType: varchar("testType", { length: 32 }).notNull(), // DON | aflatoxin | protein | gmo | other
+    result: varchar("result", { length: 255 }),
+    passFail: varchar("passFail", { length: 8 }), // pass | fail | null
+    lotId: bigint("lotId", { mode: "number", unsigned: true }).references(() => lots.id),
+    loadId: bigint("loadId", { mode: "number", unsigned: true }),
+    binId: bigint("binId", { mode: "number", unsigned: true }).references(() => bins.id),
+    note: text("note"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  },
+  (t) => ({
+    siteIdx: index("lab_results_site_idx").on(t.siteId),
+    lotIdx: index("lab_results_lot_idx").on(t.lotId),
+    binIdx: index("lab_results_bin_idx").on(t.binId),
+    loadIdx: index("lab_results_load_idx").on(t.loadId),
+  }),
+);
+
+// Attachments (#26) — documents captured against any entity (ticket=load,
+// sheet, certificate, fumigation log, …). entityId is deliberately a plain
+// column (like audit_log.entityId) referencing whatever entityType names.
+// storageRef is the content-hash filename under data/attachments/ (Phase B
+// wires upload/download).
+export const attachments = mysqlTable(
+  "attachments",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    entityType: varchar("entityType", { length: 64 }).notNull(),
+    entityId: bigint("entityId", { mode: "number", unsigned: true }).notNull(),
+    filename: varchar("filename", { length: 255 }).notNull(),
+    mime: varchar("mime", { length: 128 }),
+    size: int("size"),
+    storageRef: varchar("storageRef", { length: 255 }).notNull(),
+    uploadedBy: varchar("uploadedBy", { length: 255 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => ({
+    siteIdx: index("attachments_site_idx").on(t.siteId),
+    entityIdx: index("attachments_entity_idx").on(t.entityType, t.entityId),
+  }),
+);
+
+// Shrink / reconciliation entries (#15) — the "identifiable adjustments" the
+// DPR reconciles against: moisture, handling, aeration, error corrections.
+// quantityLbs is SIGNED (negative = book stock reduced). Append-only — a
+// wrong entry is corrected by a new entry, never edited.
+export const shrinkEntries = mysqlTable(
+  "shrink_entries",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    binId: bigint("binId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => bins.id),
+    kind: varchar("kind", { length: 24 }).notNull(), // moisture | handling | aeration | error-correction
+    quantityLbs: int("quantityLbs").notNull(),
+    effectiveDate: timestamp("effectiveDate").notNull(),
+    note: text("note"),
+    operator: varchar("operator", { length: 255 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => ({
+    siteIdx: index("shrink_entries_site_idx").on(t.siteId),
+    binIdx: index("shrink_entries_bin_idx").on(t.binId),
+  }),
+);
+
+// Bin grade overrides (#18) — manual overrides of the computed lbs-weighted
+// bin averages (shared/contracts/provenance.ts binGradeAverages). Append-only
+// log of who/when/why; the latest row per (binId, factor) wins.
+export const binGradeOverrides = mysqlTable(
+  "bin_grade_overrides",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    binId: bigint("binId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => bins.id),
+    factor: varchar("factor", { length: 32 }).notNull(),
+    value: double("value").notNull(),
+    reason: text("reason").notNull(),
+    operator: varchar("operator", { length: 255 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => ({
+    siteIdx: index("grade_overrides_site_idx").on(t.siteId),
+    binIdx: index("grade_overrides_bin_idx").on(t.binId),
+  }),
+);
+
+// ---------------------------------------------------------------------------
 // Main-office sync — key/value settings (office URL + shared key) and a log
 // of every push/pull attempt. eod_reports is used by the OFFICE portal to
 // store one end-of-day summary per site per day; it exists in both schemas so
@@ -369,3 +659,13 @@ export type SheetEvent = typeof sheetEvents.$inferSelect;
 export type BinMovement = typeof binMovements.$inferSelect;
 export type Shipment = typeof shipments.$inferSelect;
 export type AuditLogEntry = typeof auditLog.$inferSelect;
+export type GradingSchedule = typeof gradingSchedules.$inferSelect;
+export type GradeFactor = typeof gradeFactors.$inferSelect;
+export type LoadSplit = typeof loadSplits.$inferSelect;
+export type BinCleanout = typeof binCleanouts.$inferSelect;
+export type FumigationLog = typeof fumigationLogs.$inferSelect;
+export type Certificate = typeof certificates.$inferSelect;
+export type LabResult = typeof labResults.$inferSelect;
+export type Attachment = typeof attachments.$inferSelect;
+export type ShrinkEntry = typeof shrinkEntries.$inferSelect;
+export type BinGradeOverride = typeof binGradeOverrides.$inferSelect;

@@ -22,6 +22,10 @@ export interface LoadRow {
   damagePct: number | null;
   grade: string | null;
   farmOrigin: string | null;
+  // remaining grade factors + program (Phase A)
+  foreignMaterialPct: number | null;
+  sbPct: number | null;
+  program: string;
   shrinkPct: number | null;
   grossBushels: number | null;
   netBushels: number | null;
@@ -113,6 +117,9 @@ export interface LotRow {
   crop: string;
   landlordSplitPct: number;
   status: "OPEN" | "CLOSED";
+  program: string; // Phase A (#17)
+  practices: string | null; // Phase A (#31)
+  carbonNotes: string | null; // Phase A (#31)
   notes: string | null;
   createdAt: Date;
   closedAt: Date | null;
@@ -127,6 +134,7 @@ export interface BinRow {
   crop: string;
   capacityLbs: number;
   currentLbs: number;
+  program: string; // Phase A (#17)
   createdAt: Date;
   siteName: string | null;
 }
@@ -175,5 +183,147 @@ export interface AuditLogRow {
   beforeJson: string | null;
   afterJson: string | null;
   note: string | null;
+  createdAt: Date;
+}
+
+// ---------------------------------------------------------------------------
+// Phase A row types (research feature guide, data-model layer)
+// ---------------------------------------------------------------------------
+
+/** Per-crop shrink/dock schedule row (#3). siteId null = plant-wide default. */
+export interface GradingScheduleRow {
+  id: number;
+  siteId: number | null;
+  crop: string;
+  moistureShrinkPerPoint: number;
+  baseMoisturePct: number;
+  handlingShrinkPct: number;
+  dockageRules: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Grade-factor min/max range for one (crop, grade class, factor) (#3). */
+export interface GradeFactorRow {
+  id: number;
+  siteId: number | null;
+  crop: string;
+  gradeClass: string;
+  factor: string;
+  minValue: number | null;
+  maxValue: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Farmer/landlord percentage split of one load (#4). */
+export interface LoadSplitRow {
+  id: number;
+  loadId: number;
+  partyType: string; // farmer | landlord
+  partyId: number;
+  splitPct: number;
+  createdAt: Date;
+}
+
+/** Bin empty & cleanout record — genealogy reset point (#12). */
+export interface BinCleanoutRow {
+  id: number;
+  siteId: number;
+  binId: number;
+  emptiedAt: Date;
+  cleanedAt: Date | null;
+  method: string | null;
+  note: string | null;
+  operator: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Fumigation / treatment log entry (#19). */
+export interface FumigationLogRow {
+  id: number;
+  siteId: number;
+  binId: number;
+  product: string;
+  dosage: string | null;
+  appliedAt: Date;
+  exposureHours: number | null;
+  aerationClearedAt: Date | null;
+  applicator: string | null;
+  note: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Certificate registry entry (#20). */
+export interface CertificateRow {
+  id: number;
+  siteId: number;
+  type: string;
+  certNumber: string;
+  issuedAt: Date;
+  status: string; // issued | reprinted | void
+  lotId: number | null;
+  shipmentId: number | null;
+  note: string | null;
+  fileRef: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Lab result bound to a lot / load / bin (#22). */
+export interface LabResultRow {
+  id: number;
+  siteId: number;
+  sampleDate: Date;
+  labName: string | null;
+  testType: string;
+  result: string | null;
+  passFail: string | null; // pass | fail | null
+  lotId: number | null;
+  loadId: number | null;
+  binId: number | null;
+  note: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Attached document metadata (#26). */
+export interface AttachmentRow {
+  id: number;
+  siteId: number;
+  entityType: string;
+  entityId: number;
+  filename: string;
+  mime: string | null;
+  size: number | null;
+  storageRef: string;
+  uploadedBy: string | null;
+  createdAt: Date;
+}
+
+/** Shrink / reconciliation adjustment entry (#15), quantityLbs signed. */
+export interface ShrinkEntryRow {
+  id: number;
+  siteId: number;
+  binId: number;
+  kind: string; // moisture | handling | aeration | error-correction
+  quantityLbs: number;
+  effectiveDate: Date;
+  note: string | null;
+  operator: string | null;
+  createdAt: Date;
+}
+
+/** Manual override of a computed bin grade average (#18), append-only. */
+export interface BinGradeOverrideRow {
+  id: number;
+  siteId: number;
+  binId: number;
+  factor: string;
+  value: number;
+  reason: string;
+  operator: string | null;
   createdAt: Date;
 }

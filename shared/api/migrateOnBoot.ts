@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { migrate } from "drizzle-orm/mysql2/migrator";
 import { getDb, initDb, isOffline } from "./queries/connection";
+import { seedGradingDefaults } from "./lib/gradingDefaults";
 import { env } from "./lib/env";
 
 /**
@@ -43,6 +44,14 @@ export async function migrateAndSeedOnBoot(seedIfEmpty: () => Promise<boolean>) 
       if (env.isProduction) process.exit(1);
       throw err;
     }
+  }
+  // Grading tables (#3) are editable config seeded with US defaults — insert
+  // only the missing crops, never overwriting operator edits.
+  try {
+    const seeded = await seedGradingDefaults(db);
+    if (seeded) console.log("[boot] grading-table defaults seeded");
+  } catch (err) {
+    console.error("[boot] grading-defaults seed failed (continuing):", err);
   }
   if (!env.SEED_DEMO) {
     console.log("[boot] SEED_DEMO off — skipping demo dataset");

@@ -53,6 +53,7 @@ const SQLITE_DDL: string[] = [
     "crop" TEXT NOT NULL,
     "capacityLbs" INTEGER NOT NULL,
     "currentLbs" INTEGER NOT NULL DEFAULT 0,
+    "program" TEXT NOT NULL DEFAULT 'conventional',
     "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
   )`,
   `CREATE INDEX IF NOT EXISTS "bins_site_idx" ON "bins" ("siteId")`,
@@ -77,6 +78,9 @@ const SQLITE_DDL: string[] = [
     "crop" TEXT NOT NULL,
     "landlordSplitPct" REAL NOT NULL DEFAULT 0,
     "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "program" TEXT NOT NULL DEFAULT 'conventional',
+    "practices" TEXT,
+    "carbonNotes" TEXT,
     "notes" TEXT,
     "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
     "closedAt" INTEGER
@@ -126,6 +130,9 @@ const SQLITE_DDL: string[] = [
     "damagePct" REAL,
     "grade" TEXT,
     "farmOrigin" TEXT,
+    "foreignMaterialPct" REAL,
+    "sbPct" REAL,
+    "program" TEXT NOT NULL DEFAULT 'conventional',
     "shrinkPct" REAL,
     "grossBushels" REAL,
     "netBushels" REAL,
@@ -226,6 +233,150 @@ const SQLITE_DDL: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS "audit_entity_idx" ON "audit_log" ("entityType", "entityId")`,
   `CREATE INDEX IF NOT EXISTS "audit_created_idx" ON "audit_log" ("createdAt")`,
+  // -------------------------------------------------------------------
+  // Phase A tables (grading, splits, cleanouts, fumigation, certificates,
+  // lab results, attachments, shrink entries, bin grade overrides).
+  // CREATE TABLE IF NOT EXISTS — existing dev databases pick these up on
+  // the next boot without any ALTER.
+  // -------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS "grading_schedules" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER,
+    "crop" TEXT NOT NULL,
+    "moistureShrinkPerPoint" REAL NOT NULL,
+    "baseMoisturePct" REAL NOT NULL,
+    "handlingShrinkPct" REAL NOT NULL DEFAULT 0,
+    "dockageRules" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    "updatedAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "grading_sched_site_crop_idx" ON "grading_schedules" ("siteId", "crop")`,
+  `CREATE TABLE IF NOT EXISTS "grade_factors" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER,
+    "crop" TEXT NOT NULL,
+    "gradeClass" TEXT NOT NULL,
+    "factor" TEXT NOT NULL,
+    "minValue" REAL,
+    "maxValue" REAL,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    "updatedAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "grade_factor_site_crop_idx" ON "grade_factors" ("siteId", "crop")`,
+  `CREATE TABLE IF NOT EXISTS "load_splits" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "loadId" INTEGER NOT NULL,
+    "partyType" TEXT NOT NULL,
+    "partyId" INTEGER NOT NULL,
+    "splitPct" REAL NOT NULL,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "load_splits_load_idx" ON "load_splits" ("loadId")`,
+  `CREATE TABLE IF NOT EXISTS "bin_cleanouts" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "binId" INTEGER NOT NULL,
+    "emptiedAt" INTEGER NOT NULL,
+    "cleanedAt" INTEGER,
+    "method" TEXT,
+    "note" TEXT,
+    "operator" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    "updatedAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "cleanouts_site_idx" ON "bin_cleanouts" ("siteId")`,
+  `CREATE INDEX IF NOT EXISTS "cleanouts_bin_idx" ON "bin_cleanouts" ("binId")`,
+  `CREATE TABLE IF NOT EXISTS "fumigation_logs" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "binId" INTEGER NOT NULL,
+    "product" TEXT NOT NULL,
+    "dosage" TEXT,
+    "appliedAt" INTEGER NOT NULL,
+    "exposureHours" REAL,
+    "aerationClearedAt" INTEGER,
+    "applicator" TEXT,
+    "note" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    "updatedAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "fumigation_site_idx" ON "fumigation_logs" ("siteId")`,
+  `CREATE INDEX IF NOT EXISTS "fumigation_bin_idx" ON "fumigation_logs" ("binId")`,
+  `CREATE TABLE IF NOT EXISTS "certificates" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "type" TEXT NOT NULL,
+    "certNumber" TEXT NOT NULL,
+    "issuedAt" INTEGER NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'issued',
+    "lotId" INTEGER,
+    "shipmentId" INTEGER,
+    "note" TEXT,
+    "fileRef" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    "updatedAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "certificates_site_idx" ON "certificates" ("siteId")`,
+  `CREATE INDEX IF NOT EXISTS "certificates_lot_idx" ON "certificates" ("lotId")`,
+  `CREATE INDEX IF NOT EXISTS "certificates_shipment_idx" ON "certificates" ("shipmentId")`,
+  `CREATE TABLE IF NOT EXISTS "lab_results" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "sampleDate" INTEGER NOT NULL,
+    "labName" TEXT,
+    "testType" TEXT NOT NULL,
+    "result" TEXT,
+    "passFail" TEXT,
+    "lotId" INTEGER,
+    "loadId" INTEGER,
+    "binId" INTEGER,
+    "note" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    "updatedAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "lab_results_site_idx" ON "lab_results" ("siteId")`,
+  `CREATE INDEX IF NOT EXISTS "lab_results_lot_idx" ON "lab_results" ("lotId")`,
+  `CREATE INDEX IF NOT EXISTS "lab_results_bin_idx" ON "lab_results" ("binId")`,
+  `CREATE INDEX IF NOT EXISTS "lab_results_load_idx" ON "lab_results" ("loadId")`,
+  `CREATE TABLE IF NOT EXISTS "attachments" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "entityType" TEXT NOT NULL,
+    "entityId" INTEGER NOT NULL,
+    "filename" TEXT NOT NULL,
+    "mime" TEXT,
+    "size" INTEGER,
+    "storageRef" TEXT NOT NULL,
+    "uploadedBy" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "attachments_site_idx" ON "attachments" ("siteId")`,
+  `CREATE INDEX IF NOT EXISTS "attachments_entity_idx" ON "attachments" ("entityType", "entityId")`,
+  `CREATE TABLE IF NOT EXISTS "shrink_entries" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "binId" INTEGER NOT NULL,
+    "kind" TEXT NOT NULL,
+    "quantityLbs" INTEGER NOT NULL,
+    "effectiveDate" INTEGER NOT NULL,
+    "note" TEXT,
+    "operator" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "shrink_entries_site_idx" ON "shrink_entries" ("siteId")`,
+  `CREATE INDEX IF NOT EXISTS "shrink_entries_bin_idx" ON "shrink_entries" ("binId")`,
+  `CREATE TABLE IF NOT EXISTS "bin_grade_overrides" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "binId" INTEGER NOT NULL,
+    "factor" TEXT NOT NULL,
+    "value" REAL NOT NULL,
+    "reason" TEXT NOT NULL,
+    "operator" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "grade_overrides_site_idx" ON "bin_grade_overrides" ("siteId")`,
+  `CREATE INDEX IF NOT EXISTS "grade_overrides_bin_idx" ON "bin_grade_overrides" ("binId")`,
 ];
 
 // ---------------------------------------------------------------------------
@@ -247,6 +398,14 @@ const SQLITE_ALTER_COLUMNS: string[] = [
   `ALTER TABLE "loads" ADD COLUMN "shipmentId" INTEGER`,
   `ALTER TABLE "loads" ADD COLUMN "voidedAt" INTEGER`,
   `ALTER TABLE "loads" ADD COLUMN "voidReason" TEXT`,
+  // Phase A columns on existing tables
+  `ALTER TABLE "bins" ADD COLUMN "program" TEXT NOT NULL DEFAULT 'conventional'`,
+  `ALTER TABLE "lots" ADD COLUMN "program" TEXT NOT NULL DEFAULT 'conventional'`,
+  `ALTER TABLE "lots" ADD COLUMN "practices" TEXT`,
+  `ALTER TABLE "lots" ADD COLUMN "carbonNotes" TEXT`,
+  `ALTER TABLE "loads" ADD COLUMN "foreignMaterialPct" REAL`,
+  `ALTER TABLE "loads" ADD COLUMN "sbPct" REAL`,
+  `ALTER TABLE "loads" ADD COLUMN "program" TEXT NOT NULL DEFAULT 'conventional'`,
 ];
 
 function applySqliteUpgrades(sqlite: InstanceType<typeof Database>) {

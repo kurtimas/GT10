@@ -151,3 +151,87 @@ export function fifoDrawdown(
   const allocatedLbs = quantityLbs - remaining;
   return { allocations, allocatedLbs, shortfallLbs: remaining };
 }
+
+// ---------------------------------------------------------------------------
+// Per-bin quality averaging (Phase A, research #18) — computed, NOT stored.
+// The bin's current grain (the FIFO layers above) is attributed back to the
+// inbound loads that delivered it, and each load's grade factors are averaged
+// weighted by the lbs of that load still in the bin. Manual overrides are
+// stored separately (bin_grade_overrides table) and applied by the caller.
+// ---------------------------------------------------------------------------
+
+/** Grade factors averaged per bin. */
+export const BIN_GRADE_FACTOR_KEYS = [
+  "moisturePct",
+  "testWeightLbs",
+  "dockagePct",
+  "damagePct",
+  "proteinPct",
+] as const;
+
+export type BinGradeFactorKey = (typeof BIN_GRADE_FACTOR_KEYS)[number];
+
+/** The grade readings of one load (a loads-table row or plain object). */
+export interface LoadGradeSample {
+  id: number;
+  moisturePct?: number | null;
+  testWeightLbs?: number | null;
+  dockagePct?: number | null;
+  damagePct?: number | null;
+  proteinPct?: number | null;
+}
+
+export interface FactorAverage {
+  /** lbs-weighted average over the grain with a reading for this factor */
+  value: number;
+  /** lbs of grain that had a reading (grain without one is excluded) */
+  coveredLbs: number;
+}
+
+export interface BinGradeAverages {
+  /** lbs currently in the bin according to the log */
+  totalLbs: number;
+  moisturePct: FactorAverage | null;
+  testWeightLbs: FactorAverage | null;
+  dockagePct: FactorAverage | null;
+  damagePct: FactorAverage | null;
+  proteinPct: FactorAverage | null;
+}
+
+/**
+ * lbs-weighted average grade factors for the grain currently in `binId`,
+ * derived from the event log: each remaining FIFO layer is weighted by its
+ * lbs and contributes the grade readings of the load that delivered it.
+ * Layers whose load carried no reading for a factor are excluded from that
+ * factor's average (reported via coveredLbs); a factor with no readings at
+ * all comes back null. Lot-less layers (manual adjustments) carry no grades.
+ */
+export function binGradeAverages(
+  events: (BinMovementEvent & { loadId?: number | null })[],
+  loads: LoadGradeSample[],
+  binId: number,
+): BinGradeAverages {
+  const gradesByLoadId = new Map(loads.map((l) => [l.id, l]));
+  const loadByMovementId = new Map(events.map((e) => [e.id, e.loadId ?? null]));
+  const layers = binLayers(events, binId);
+  const totalLbs = layers.reduce((sum, l) => sum + l.lbs, 0);
+
+  const result = { totalLbs } as BinGradeAverages;
+  for (const key of BIN_GRADE_FACTOR_KEYS) {
+    let weightedSum = 0;
+    let coveredLbs = 0;
+    for (const layer of layers) {
+      const loadId = loadByMovementId.get(layer.movementId);
+      const sample = loadId != null ? gradesByLoadId.get(loadId) : undefined;
+      const value = sample?.[key];
+      if (value == null) continue;
+      weightedSum += value * layer.lbs;
+      coveredLbs += layer.lbs;
+    }
+    result[key] =
+      coveredLbs > 0
+        ? { value: Math.round((weightedSum / coveredLbs) * 100) / 100, coveredLbs }
+        : null;
+  }
+  return result;
+}

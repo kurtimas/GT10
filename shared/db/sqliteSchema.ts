@@ -33,6 +33,8 @@ export const bins = sqliteTable(
     crop: text("crop").notNull(),
     capacityLbs: integer("capacityLbs").notNull(),
     currentLbs: integer("currentLbs").notNull().default(0),
+    // program segregation (Phase A, #17)
+    program: text("program").notNull().default("conventional"),
     createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
   },
   (t) => [index("bins_site_idx").on(t.siteId)],
@@ -66,6 +68,10 @@ export const lots = sqliteTable(
     crop: text("crop").notNull(),
     landlordSplitPct: real("landlordSplitPct").notNull().default(0),
     status: text("status", { enum: ["OPEN", "CLOSED"] }).notNull().default("OPEN"),
+    // program segregation (Phase A, #17) + farm-origin sustainability (#31)
+    program: text("program").notNull().default("conventional"),
+    practices: text("practices"),
+    carbonNotes: text("carbonNotes"),
     notes: text("notes"),
     createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
     closedAt: integer("closedAt", { mode: "timestamp_ms" }),
@@ -138,6 +144,10 @@ export const loads = sqliteTable(
     damagePct: real("damagePct"),
     grade: text("grade"),
     farmOrigin: text("farmOrigin"),
+    // remaining grade factors + program (Phase A, #3 / #17)
+    foreignMaterialPct: real("foreignMaterialPct"),
+    sbPct: real("sbPct"),
+    program: text("program").notNull().default("conventional"),
     shrinkPct: real("shrinkPct"),
     grossBushels: real("grossBushels"),
     netBushels: real("netBushels"),
@@ -279,5 +289,208 @@ export const eodReports = sqliteTable(
     index("eod_site_idx").on(t.siteId),
     index("eod_day_idx").on(t.day),
     uniqueIndex("eod_site_day_unique").on(t.siteId, t.day),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Phase A tables (see schema.ts comments) — SQLite mirror, no FKs (offline DB
+// stays app-disciplined, as before).
+// ---------------------------------------------------------------------------
+
+// Grading shrink/dock schedules (#3). siteId null = plant-wide default.
+export const gradingSchedules = sqliteTable(
+  "grading_schedules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId"),
+    crop: text("crop").notNull(),
+    moistureShrinkPerPoint: real("moistureShrinkPerPoint").notNull(),
+    baseMoisturePct: real("baseMoisturePct").notNull(),
+    handlingShrinkPct: real("handlingShrinkPct").notNull().default(0),
+    dockageRules: text("dockageRules"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [index("grading_sched_site_crop_idx").on(t.siteId, t.crop)],
+);
+
+// Grade factor min/max validation ranges per crop + grade class (#3).
+export const gradeFactors = sqliteTable(
+  "grade_factors",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId"),
+    crop: text("crop").notNull(),
+    gradeClass: text("gradeClass").notNull(),
+    factor: text("factor").notNull(),
+    minValue: real("minValue"),
+    maxValue: real("maxValue"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [index("grade_factor_site_crop_idx").on(t.siteId, t.crop)],
+);
+
+// Load splits (#4) — farmer/landlord share per load; partyId is plain
+// (references farmers or landlords depending on partyType).
+export const loadSplits = sqliteTable(
+  "load_splits",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    loadId: integer("loadId").notNull(),
+    partyType: text("partyType").notNull(),
+    partyId: integer("partyId").notNull(),
+    splitPct: real("splitPct").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [index("load_splits_load_idx").on(t.loadId)],
+);
+
+// Bin empty & cleanout records (#12) — genealogy reset points.
+export const binCleanouts = sqliteTable(
+  "bin_cleanouts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    binId: integer("binId").notNull(),
+    emptiedAt: integer("emptiedAt", { mode: "timestamp_ms" }).notNull(),
+    cleanedAt: integer("cleanedAt", { mode: "timestamp_ms" }),
+    method: text("method"),
+    note: text("note"),
+    operator: text("operator"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [index("cleanouts_site_idx").on(t.siteId), index("cleanouts_bin_idx").on(t.binId)],
+);
+
+// Fumigation / treatment logs (#19).
+export const fumigationLogs = sqliteTable(
+  "fumigation_logs",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    binId: integer("binId").notNull(),
+    product: text("product").notNull(),
+    dosage: text("dosage"),
+    appliedAt: integer("appliedAt", { mode: "timestamp_ms" }).notNull(),
+    exposureHours: real("exposureHours"),
+    aerationClearedAt: integer("aerationClearedAt", { mode: "timestamp_ms" }),
+    applicator: text("applicator"),
+    note: text("note"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [index("fumigation_site_idx").on(t.siteId), index("fumigation_bin_idx").on(t.binId)],
+);
+
+// Certificate registry (#20).
+export const certificates = sqliteTable(
+  "certificates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    type: text("type").notNull(),
+    certNumber: text("certNumber").notNull(),
+    issuedAt: integer("issuedAt", { mode: "timestamp_ms" }).notNull(),
+    status: text("status").notNull().default("issued"),
+    lotId: integer("lotId"),
+    shipmentId: integer("shipmentId"),
+    note: text("note"),
+    fileRef: text("fileRef"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("certificates_site_idx").on(t.siteId),
+    index("certificates_lot_idx").on(t.lotId),
+    index("certificates_shipment_idx").on(t.shipmentId),
+  ],
+);
+
+// Lab results (#22) — bound to the lot / load / bin they certify.
+export const labResults = sqliteTable(
+  "lab_results",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    sampleDate: integer("sampleDate", { mode: "timestamp_ms" }).notNull(),
+    labName: text("labName"),
+    testType: text("testType").notNull(),
+    result: text("result"),
+    passFail: text("passFail"),
+    lotId: integer("lotId"),
+    loadId: integer("loadId"),
+    binId: integer("binId"),
+    note: text("note"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+    updatedAt: integer("updatedAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("lab_results_site_idx").on(t.siteId),
+    index("lab_results_lot_idx").on(t.lotId),
+    index("lab_results_bin_idx").on(t.binId),
+    index("lab_results_load_idx").on(t.loadId),
+  ],
+);
+
+// Attachments (#26) — documents against any entity; storageRef is the
+// content-hash filename under data/attachments/.
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    entityType: text("entityType").notNull(),
+    entityId: integer("entityId").notNull(),
+    filename: text("filename").notNull(),
+    mime: text("mime"),
+    size: integer("size"),
+    storageRef: text("storageRef").notNull(),
+    uploadedBy: text("uploadedBy"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("attachments_site_idx").on(t.siteId),
+    index("attachments_entity_idx").on(t.entityType, t.entityId),
+  ],
+);
+
+// Shrink / reconciliation entries (#15) — append-only, quantityLbs signed.
+export const shrinkEntries = sqliteTable(
+  "shrink_entries",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    binId: integer("binId").notNull(),
+    kind: text("kind").notNull(),
+    quantityLbs: integer("quantityLbs").notNull(),
+    effectiveDate: integer("effectiveDate", { mode: "timestamp_ms" }).notNull(),
+    note: text("note"),
+    operator: text("operator"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("shrink_entries_site_idx").on(t.siteId),
+    index("shrink_entries_bin_idx").on(t.binId),
+  ],
+);
+
+// Bin grade overrides (#18) — append-only; latest per (binId, factor) wins.
+export const binGradeOverrides = sqliteTable(
+  "bin_grade_overrides",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    binId: integer("binId").notNull(),
+    factor: text("factor").notNull(),
+    value: real("value").notNull(),
+    reason: text("reason").notNull(),
+    operator: text("operator"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("grade_overrides_site_idx").on(t.siteId),
+    index("grade_overrides_bin_idx").on(t.binId),
   ],
 );
