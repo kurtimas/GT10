@@ -146,6 +146,7 @@ export const peopleRouter = createRouter({
           code: z.string().min(1),
           crop: z.enum(CROPS),
           landlordSplitPct: z.number().min(0).max(100).default(0),
+          program: z.string().trim().min(1).max(32).optional(),
           notes: z.string().optional(),
         }),
       )
@@ -172,6 +173,7 @@ export const peopleRouter = createRouter({
           id: z.number(),
           landlordId: z.number().nullable().optional(),
           landlordSplitPct: z.number().min(0).max(100).optional(),
+          program: z.string().trim().min(1).max(32).optional(),
           notes: z.string().optional(),
         }),
       )

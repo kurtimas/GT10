@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { z } from "zod";
-import { baseMoisture, round2 } from "./grain";
+import { baseMoisture, bushelWeight, round2 } from "./grain";
 
 /** Grade factors a load can carry (columns on `loads`). */
 export const GRADE_FACTORS = [
@@ -209,4 +209,74 @@ export function validateGradeFactors(
     }
   }
   return violations;
+}
+
+// ---------------------------------------------------------------------------
+// Apply-on-weigh settlement math (Phase B, #3) — schedule-driven shrink/dock.
+// ---------------------------------------------------------------------------
+
+/** The schedule applied to a load (a grading_schedules row or equivalent). */
+export interface ScheduleLike {
+  moistureShrinkPerPoint: number;
+  baseMoisturePct: number;
+  handlingShrinkPct: number;
+}
+
+export interface GradeAdjustmentResult {
+  /** points of moisture above the schedule base */
+  pointsOver: number;
+  /** lbs of moisture shrink (schedule rate per point) */
+  moistureShrinkLbs: number;
+  /** lbs of handling shrink (schedule handling %) */
+  handlingLbs: number;
+  /** total shrink lbs (moisture + handling) — stamped on loads.shrinkLbs */
+  shrinkLbs: number;
+  /** lbs of dockage (dockagePct of net weight) — stamped on loads.dockLbs */
+  dockLbs: number;
+  /** combined shrink+dock as % of net weight — stamped on loads.shrinkPct */
+  shrinkPct: number;
+  grossBushels: number;
+  netBushels: number;
+}
+
+/**
+ * Compute the shrink/dock/bushel breakdown for a load from its grading
+ * schedule (1.183%/point true shrink + schedule handling + dockage 1:1).
+ * Falls back to the grain.ts base moisture when the schedule lacks one.
+ * Returns null when the load has no net weight yet.
+ */
+export function computeGradeAdjustments(
+  crop: string,
+  netLbs: number | null | undefined,
+  moisturePct: number | null | undefined,
+  dockagePct: number | null | undefined,
+  schedule?: ScheduleLike | null,
+): GradeAdjustmentResult | null {
+  if (netLbs == null || netLbs <= 0) return null;
+  const sched: ScheduleLike = schedule ?? {
+    moistureShrinkPerPoint: DEFAULT_MOISTURE_SHRINK_PER_POINT,
+    baseMoisturePct: baseMoisture(crop),
+    handlingShrinkPct: 0,
+  };
+  const moisture = applyMoistureShrink(
+    netLbs,
+    moisturePct,
+    sched.baseMoisturePct,
+    sched.moistureShrinkPerPoint,
+  );
+  const handlingLbs = round2((netLbs * Math.min(Math.max(sched.handlingShrinkPct, 0), 10)) / 100);
+  const shrinkLbs = round2(moisture.shrinkLbs + handlingLbs);
+  const dockLbs = round2((netLbs * Math.min(Math.max(dockagePct ?? 0, 0), 50)) / 100);
+  const deducted = Math.min(shrinkLbs + dockLbs, netLbs * 0.99);
+  const bw = bushelWeight(crop);
+  return {
+    pointsOver: moisture.pointsOver,
+    moistureShrinkLbs: moisture.shrinkLbs,
+    handlingLbs,
+    shrinkLbs,
+    dockLbs,
+    shrinkPct: round2((deducted / netLbs) * 100),
+    grossBushels: round2(netLbs / bw),
+    netBushels: round2((netLbs - deducted) / bw),
+  };
 }

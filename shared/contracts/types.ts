@@ -29,6 +29,9 @@ export interface LoadRow {
   shrinkPct: number | null;
   grossBushels: number | null;
   netBushels: number | null;
+  // schedule-driven shrink/dock lbs (Phase B)
+  shrinkLbs: number | null;
+  dockLbs: number | null;
   shipmentId: number | null;
   changeReason: string | null;
   voidedAt: Date | null;
@@ -324,6 +327,43 @@ export interface BinGradeOverrideRow {
   factor: string;
   value: number;
   reason: string;
+  operator: string | null;
+  createdAt: Date;
+}
+
+/** Frozen Daily Position Record row, one per site × day × crop × program (#5). */
+export interface DprSnapshotRow {
+  id: number;
+  siteId: number;
+  day: string; // YYYY-MM-DD
+  crop: string;
+  program: string;
+  openingLbs: number;
+  receivedLbs: number;
+  receivedBu: number;
+  shippedLbs: number;
+  shippedBu: number;
+  transfersInLbs: number;
+  transfersOutLbs: number;
+  shrinkMoistureLbs: number;
+  shrinkHandlingLbs: number;
+  shrinkAerationLbs: number;
+  shrinkErrorCorrectionLbs: number;
+  adjustmentsLbs: number;
+  endingLbs: number;
+  endingBu: number;
+  frozen: boolean;
+  createdAt: Date;
+}
+
+/** Physical bin count for mass-balance reconciliation (#15). */
+export interface PhysicalCountRow {
+  id: number;
+  siteId: number;
+  binId: number;
+  countedLbs: number;
+  countedAt: Date;
+  note: string | null;
   operator: string | null;
   createdAt: Date;
 }

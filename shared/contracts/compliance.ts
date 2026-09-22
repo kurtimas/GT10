@@ -142,3 +142,33 @@ export const attachmentSchema = z.object({
 export type AttachmentInput = z.infer<typeof attachmentSchema>;
 /** Local directory Phase B stores attachment payloads in. */
 export const ATTACHMENTS_DIR = "data/attachments";
+/** Entity types attachments can be wired to (Phase B). */
+export const ATTACHMENT_ENTITY_TYPES = [
+  "load",
+  "weight_sheet",
+  "certificate",
+  "fumigation_log",
+  "lot",
+  "bin",
+  "shipment",
+  "lab_result",
+] as const;
+/** Upload size cap (bytes of decoded payload). */
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+// #15 — physical bin counts (mass-balance reconciliation), append-only
+export const physicalCountSchema = z.object({
+  siteId: z.number().int().positive(),
+  binId: z.number().int().positive(),
+  countedLbs: z.number().int().min(0),
+  countedAt: z.date(),
+  note: z.string().max(4000).nullable().optional(),
+  operator: z.string().trim().max(255).nullable().optional(),
+});
+export type PhysicalCountInput = z.infer<typeof physicalCountSchema>;
+/**
+ * Examiner variance threshold (#15): book-vs-physical is flagged when the
+ * variance exceeds BOTH 1% of book stock AND 500 bushels.
+ */
+export const MASS_BALANCE_FLAG_PCT = 1;
+export const MASS_BALANCE_FLAG_BU = 500;

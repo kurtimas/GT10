@@ -114,11 +114,14 @@ export const shipmentsRouter = createRouter({
       if (!bin) throw new Error("Source bin not found");
       if (bin.siteId !== input.siteId) throw new Error("Source bin belongs to another site");
 
-      // FIFO attribution of the draw against the bin's CURRENT composition.
-      // In link-only mode the grain already left via the scale, so the draw
-      // is not re-validated (it would see the post-weigh-out composition).
+      // FIFO attribution of the draw against the bin's CURRENT composition
+      // (bounded by the latest completed cleanout, #12). In link-only mode
+      // the grain already left via the scale, so the draw is not re-validated
+      // (it would see the post-weigh-out composition).
+      const { cleanoutCutoff } = await import("./lib/cleanouts");
+      const cutoff = await cleanoutCutoff(db, binId);
       const events = await movementsForBin(db, binId);
-      const draw = linkOnly ? null : fifoDrawdown(events, binId, quantityLbs);
+      const draw = linkOnly ? null : fifoDrawdown(events, binId, quantityLbs, cutoff);
       const allocations = draw?.allocations ?? [];
       const shortfallLbs = draw?.shortfallLbs ?? 0;
       const attributionNote =
@@ -280,19 +283,25 @@ export const shipmentsRouter = createRouter({
   // ---------------------------------- bin composition (provenance replay)
   // What lots are in a bin right now, per the movement log — plus the
   // log-derived total next to the cached bins.currentLbs for reconciliation.
+  // Phase B: replay is bounded by the bin's latest completed cleanout (#12)
+  // and the response carries the effective grade factors (#18).
   binComposition: publicQuery
     .input(z.object({ binId: z.number() }))
     .query(async ({ input }) => {
       const db = getDb();
       const bin = await db.query.bins.findFirst({ where: eq(bins.id, input.binId) });
       if (!bin) throw new Error("Bin not found");
+      const { cleanoutCutoff } = await import("./lib/cleanouts");
+      const { effectiveBinGrades } = await import("./lib/binGrades");
+      const cutoff = await cleanoutCutoff(db, input.binId);
       const events = await movementsForBin(db, input.binId);
-      const composition = binCompositionByLot(events, input.binId);
+      const composition = binCompositionByLot(events, input.binId, cutoff);
       const lotIds = composition.map((c) => c.lotId).filter((v): v is number => v != null);
       const lotRows = lotIds.length
         ? await db.select({ id: lots.id, code: lots.code }).from(lots).where(inArray(lots.id, lotIds))
         : [];
       const codeById = new Map(lotRows.map((l) => [l.id, l.code]));
+      const grades = await effectiveBinGrades(db, input.binId);
       return {
         bin,
         composition: composition.map((c) => ({
@@ -300,8 +309,10 @@ export const shipmentsRouter = createRouter({
           lotCode: c.lotId != null ? (codeById.get(c.lotId) ?? null) : null,
           lbs: c.lbs,
         })),
-        logTotalLbs: binTotalLbs(events, input.binId),
+        logTotalLbs: binTotalLbs(events, input.binId, cutoff),
         cacheLbs: bin.currentLbs,
+        cleanoutCutoff: cutoff,
+        grades: grades.factors,
       };
     }),
 });

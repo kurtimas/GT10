@@ -151,6 +151,9 @@ export const loads = sqliteTable(
     shrinkPct: real("shrinkPct"),
     grossBushels: real("grossBushels"),
     netBushels: real("netBushels"),
+    // Phase B (#3): schedule-driven shrink/dock lbs stamped at grade time
+    shrinkLbs: real("shrinkLbs"),
+    dockLbs: real("dockLbs"),
     // outbound load → shipment link (Phase 3)
     shipmentId: integer("shipmentId"),
     changeReason: text("changeReason"),
@@ -492,5 +495,60 @@ export const binGradeOverrides = sqliteTable(
   (t) => [
     index("grade_overrides_site_idx").on(t.siteId),
     index("grade_overrides_bin_idx").on(t.binId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Phase B tables — SQLite mirror (see schema.ts comments).
+// ---------------------------------------------------------------------------
+
+// Daily Position Record snapshots (#5) — frozen at close of day.
+export const dprSnapshots = sqliteTable(
+  "dpr_snapshots",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    day: text("day").notNull(), // YYYY-MM-DD
+    crop: text("crop").notNull(),
+    program: text("program").notNull().default("conventional"),
+    openingLbs: integer("openingLbs").notNull().default(0),
+    receivedLbs: integer("receivedLbs").notNull().default(0),
+    receivedBu: real("receivedBu").notNull().default(0),
+    shippedLbs: integer("shippedLbs").notNull().default(0),
+    shippedBu: real("shippedBu").notNull().default(0),
+    transfersInLbs: integer("transfersInLbs").notNull().default(0),
+    transfersOutLbs: integer("transfersOutLbs").notNull().default(0),
+    shrinkMoistureLbs: integer("shrinkMoistureLbs").notNull().default(0),
+    shrinkHandlingLbs: integer("shrinkHandlingLbs").notNull().default(0),
+    shrinkAerationLbs: integer("shrinkAerationLbs").notNull().default(0),
+    shrinkErrorCorrectionLbs: integer("shrinkErrorCorrectionLbs").notNull().default(0),
+    adjustmentsLbs: integer("adjustmentsLbs").notNull().default(0),
+    endingLbs: integer("endingLbs").notNull().default(0),
+    endingBu: real("endingBu").notNull().default(0),
+    frozen: integer("frozen", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("dpr_site_day_idx").on(t.siteId, t.day),
+    uniqueIndex("dpr_site_day_crop_program_unique").on(t.siteId, t.day, t.crop, t.program),
+  ],
+);
+
+// Physical bin counts (#15) — mass-balance reconciliation, append-only.
+export const physicalCounts = sqliteTable(
+  "physical_counts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    siteId: integer("siteId").notNull(),
+    binId: integer("binId").notNull(),
+    countedLbs: integer("countedLbs").notNull(),
+    countedAt: integer("countedAt", { mode: "timestamp_ms" }).notNull(),
+    note: text("note"),
+    operator: text("operator"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("physical_counts_site_idx").on(t.siteId),
+    index("physical_counts_bin_idx").on(t.binId),
   ],
 );

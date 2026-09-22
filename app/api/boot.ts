@@ -14,6 +14,23 @@ app.use(simpleBodyLimit(50 * 1024 * 1024));
 app.get("/api/health", (c) =>
   c.json({ ok: true, mode: isOffline() ? ("offline" as const) : ("mysql" as const) }),
 );
+// Attachment download (#26) — streams the stored payload with its mime type.
+app.get("/api/attachments/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad id" }, 400);
+  const { attachmentFileFor } = await import("@shared/api/attachmentsRouter");
+  const found = await attachmentFileFor(id);
+  if (!found) return c.json({ error: "Attachment not found" }, 404);
+  const fs = await import("node:fs");
+  const stream = fs.createReadStream(found.file);
+  const { Readable } = await import("node:stream");
+  return new Response(Readable.toWeb(stream) as ReadableStream, {
+    headers: {
+      "content-type": found.mime,
+      "content-disposition": `attachment; filename="${found.filename.replace(/"/g, "")}"`,
+    },
+  });
+});
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({
     endpoint: "/api/trpc",

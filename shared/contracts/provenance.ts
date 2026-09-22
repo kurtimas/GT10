@@ -54,12 +54,22 @@ export interface FifoDrawdownResult {
  * Chronological events touching `binId`, oldest first. Events are ordered by
  * (createdAt, id) — the id tie-break keeps same-second events in insert order.
  * Non-positive quantities are ignored (a movement always moves grain).
+ * `cutoffAt` (Phase B, #12): when set, only events strictly AFTER it are
+ * considered — a completed bin cleanout is a genealogy reset point, so grain
+ * that predates it is no longer part of the bin's lineage.
  */
-function orderedEventsForBin(events: BinMovementEvent[], binId: number): BinMovementEvent[] {
+function orderedEventsForBin(
+  events: BinMovementEvent[],
+  binId: number,
+  cutoffAt?: Date | null,
+): BinMovementEvent[] {
+  const cutoffMs = cutoffAt ? cutoffAt.getTime() : null;
   return events
     .filter(
       (e) =>
-        e.quantityLbs > 0 && (e.fromBinId === binId || e.toBinId === binId),
+        e.quantityLbs > 0 &&
+        (e.fromBinId === binId || e.toBinId === binId) &&
+        (cutoffMs == null || e.createdAt.getTime() > cutoffMs),
     )
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id - b.id);
 }
@@ -82,11 +92,17 @@ function consumeOldest(layers: BinLotLayer[], lbs: number): void {
  * outflow for the source bin and an inflow for the destination. Outflows
  * always consume the oldest layers first, regardless of the lot recorded on
  * the outbound event — that lotId is the attribution computed at write time,
- * and replaying FIFO keeps the log self-consistent.
+ * and replaying FIFO keeps the log self-consistent. `cutoffAt` (Phase B,
+ * #12) bounds the replay to events strictly after a completed cleanout — a
+ * cleanout is a genealogy reset point.
  */
-export function binLayers(events: BinMovementEvent[], binId: number): BinLotLayer[] {
+export function binLayers(
+  events: BinMovementEvent[],
+  binId: number,
+  cutoffAt?: Date | null,
+): BinLotLayer[] {
   const layers: BinLotLayer[] = [];
-  for (const e of orderedEventsForBin(events, binId)) {
+  for (const e of orderedEventsForBin(events, binId, cutoffAt)) {
     if (e.toBinId === binId) {
       layers.push({ lotId: e.lotId, lbs: e.quantityLbs, since: e.createdAt, movementId: e.id });
     }
@@ -103,10 +119,14 @@ export function binLayers(events: BinMovementEvent[], binId: number): BinLotLaye
  * lots with a positive balance are listed. lotId null aggregates lot-less
  * (unknown-origin) grain.
  */
-export function binCompositionByLot(events: BinMovementEvent[], binId: number): LotQuantity[] {
+export function binCompositionByLot(
+  events: BinMovementEvent[],
+  binId: number,
+  cutoffAt?: Date | null,
+): LotQuantity[] {
   const order: (number | null)[] = [];
   const byLot = new Map<number | null, number>();
-  for (const layer of binLayers(events, binId)) {
+  for (const layer of binLayers(events, binId, cutoffAt)) {
     if (!byLot.has(layer.lotId)) order.push(layer.lotId);
     byLot.set(layer.lotId, (byLot.get(layer.lotId) ?? 0) + layer.lbs);
   }
@@ -116,8 +136,12 @@ export function binCompositionByLot(events: BinMovementEvent[], binId: number): 
 }
 
 /** Total lbs currently in the bin according to the log (reconcile vs bins.currentLbs). */
-export function binTotalLbs(events: BinMovementEvent[], binId: number): number {
-  return binLayers(events, binId).reduce((sum, l) => sum + l.lbs, 0);
+export function binTotalLbs(
+  events: BinMovementEvent[],
+  binId: number,
+  cutoffAt?: Date | null,
+): number {
+  return binLayers(events, binId, cutoffAt).reduce((sum, l) => sum + l.lbs, 0);
 }
 
 /**
@@ -130,11 +154,12 @@ export function fifoDrawdown(
   events: BinMovementEvent[],
   binId: number,
   quantityLbs: number,
+  cutoffAt?: Date | null,
 ): FifoDrawdownResult {
   if (!Number.isFinite(quantityLbs) || quantityLbs <= 0) {
     throw new Error("fifoDrawdown: quantityLbs must be a positive number");
   }
-  const layers = binLayers(events, binId);
+  const layers = binLayers(events, binId, cutoffAt);
   const allocations: LotQuantity[] = [];
   let remaining = quantityLbs;
   for (const layer of layers) {
@@ -210,10 +235,11 @@ export function binGradeAverages(
   events: (BinMovementEvent & { loadId?: number | null })[],
   loads: LoadGradeSample[],
   binId: number,
+  cutoffAt?: Date | null,
 ): BinGradeAverages {
   const gradesByLoadId = new Map(loads.map((l) => [l.id, l]));
   const loadByMovementId = new Map(events.map((e) => [e.id, e.loadId ?? null]));
-  const layers = binLayers(events, binId);
+  const layers = binLayers(events, binId, cutoffAt);
   const totalLbs = layers.reduce((sum, l) => sum + l.lbs, 0);
 
   const result = { totalLbs } as BinGradeAverages;

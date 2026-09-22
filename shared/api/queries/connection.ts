@@ -136,6 +136,8 @@ const SQLITE_DDL: string[] = [
     "shrinkPct" REAL,
     "grossBushels" REAL,
     "netBushels" REAL,
+    "shrinkLbs" REAL,
+    "dockLbs" REAL,
     "shipmentId" INTEGER,
     "changeReason" TEXT,
     "voidedAt" INTEGER,
@@ -377,6 +379,46 @@ const SQLITE_DDL: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS "grade_overrides_site_idx" ON "bin_grade_overrides" ("siteId")`,
   `CREATE INDEX IF NOT EXISTS "grade_overrides_bin_idx" ON "bin_grade_overrides" ("binId")`,
+  // -------------------------------------------------------------------
+  // Phase B tables (DPR snapshots, physical counts).
+  // -------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS "dpr_snapshots" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "day" TEXT NOT NULL,
+    "crop" TEXT NOT NULL,
+    "program" TEXT NOT NULL DEFAULT 'conventional',
+    "openingLbs" INTEGER NOT NULL DEFAULT 0,
+    "receivedLbs" INTEGER NOT NULL DEFAULT 0,
+    "receivedBu" REAL NOT NULL DEFAULT 0,
+    "shippedLbs" INTEGER NOT NULL DEFAULT 0,
+    "shippedBu" REAL NOT NULL DEFAULT 0,
+    "transfersInLbs" INTEGER NOT NULL DEFAULT 0,
+    "transfersOutLbs" INTEGER NOT NULL DEFAULT 0,
+    "shrinkMoistureLbs" INTEGER NOT NULL DEFAULT 0,
+    "shrinkHandlingLbs" INTEGER NOT NULL DEFAULT 0,
+    "shrinkAerationLbs" INTEGER NOT NULL DEFAULT 0,
+    "shrinkErrorCorrectionLbs" INTEGER NOT NULL DEFAULT 0,
+    "adjustmentsLbs" INTEGER NOT NULL DEFAULT 0,
+    "endingLbs" INTEGER NOT NULL DEFAULT 0,
+    "endingBu" REAL NOT NULL DEFAULT 0,
+    "frozen" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "dpr_site_day_idx" ON "dpr_snapshots" ("siteId", "day")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "dpr_site_day_crop_program_unique" ON "dpr_snapshots" ("siteId", "day", "crop", "program")`,
+  `CREATE TABLE IF NOT EXISTS "physical_counts" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "siteId" INTEGER NOT NULL,
+    "binId" INTEGER NOT NULL,
+    "countedLbs" INTEGER NOT NULL,
+    "countedAt" INTEGER NOT NULL,
+    "note" TEXT,
+    "operator" TEXT,
+    "createdAt" INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  )`,
+  `CREATE INDEX IF NOT EXISTS "physical_counts_site_idx" ON "physical_counts" ("siteId")`,
+  `CREATE INDEX IF NOT EXISTS "physical_counts_bin_idx" ON "physical_counts" ("binId")`,
 ];
 
 // ---------------------------------------------------------------------------
@@ -406,6 +448,9 @@ const SQLITE_ALTER_COLUMNS: string[] = [
   `ALTER TABLE "loads" ADD COLUMN "foreignMaterialPct" REAL`,
   `ALTER TABLE "loads" ADD COLUMN "sbPct" REAL`,
   `ALTER TABLE "loads" ADD COLUMN "program" TEXT NOT NULL DEFAULT 'conventional'`,
+  // Phase B columns on existing tables
+  `ALTER TABLE "loads" ADD COLUMN "shrinkLbs" REAL`,
+  `ALTER TABLE "loads" ADD COLUMN "dockLbs" REAL`,
 ];
 
 function applySqliteUpgrades(sqlite: InstanceType<typeof Database>) {

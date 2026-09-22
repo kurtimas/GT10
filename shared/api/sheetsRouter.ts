@@ -202,6 +202,8 @@ export const sheetsRouter = createRouter({
           lotId: z.number().optional(),
           landlordId: z.number().optional(),
           crop: z.string().optional(),
+          /** #17 — filter by the lot's identity-preserved program */
+          program: z.string().optional(),
           status: STATUS.optional(),
           dateFrom: z.string().optional(), // YYYY-MM-DD
           dateTo: z.string().optional(),
@@ -242,6 +244,7 @@ export const sheetsRouter = createRouter({
       if (input?.lotId) conds.push(eq(weightSheets.lotId, input.lotId));
       if (input?.landlordId) conds.push(eq(weightSheets.landlordId, input.landlordId));
       if (input?.crop) conds.push(eq(weightSheets.crop, input.crop));
+      if (input?.program) conds.push(eq(lots.program, input.program));
       if (input?.status) conds.push(eq(weightSheets.status, input.status));
       if (input?.dateFrom) conds.push(gte(weightSheets.createdAt, startOfDay(parseDay(input.dateFrom))));
       if (input?.dateTo) conds.push(lte(weightSheets.createdAt, endOfDay(parseDay(input.dateTo))));
@@ -414,6 +417,12 @@ export const sheetsRouter = createRouter({
         // loadNo comes from ALL loads (incl. voided) so the unique
         // (sheetId, loadNo) index can never collide with a voided row.
         const loadNo = Math.max(0, ...existing.map((l) => l.loadNo)) + 1;
+        // program denormalized from the lot at intake (#17) for reporting
+        let program = "conventional";
+        if (s.lotId != null) {
+          const lot = await tx.query.lots.findFirst({ where: eq(lots.id, s.lotId) });
+          program = lot?.program ?? program;
+        }
         const [{ id: loadId }] = await tx
           .insert(loads)
           .values({
@@ -422,6 +431,7 @@ export const sheetsRouter = createRouter({
             truckId: input.truckId,
             driverName: input.driverName || null,
             binId: input.binId ?? null,
+            program,
             ...(isInbound
               ? { grossLbs: input.weightLbs, grossAt: new Date() }
               : { tareLbs: input.weightLbs, tareAt: new Date() }),
@@ -651,6 +661,12 @@ export const sheetsRouter = createRouter({
     }),
 
   // ------------------------------------------------- grading (TEST)
+  // Phase B (#3): saving a load's grades validates the readings against the
+  // crop's grade_factors min/max ranges for the declared grade class (a
+  // reading outside the range is REJECTED with the violating factors listed)
+  // and stamps the schedule-driven shrink/dock breakdown (shrinkLbs, dockLbs,
+  // netBushels) computed from the site's grading schedule — not the flat
+  // grain.ts rate used for the pre-grade estimate at weigh-out.
   updateLoadGrades: publicQuery
     .input(
       z.object({
@@ -663,6 +679,9 @@ export const sheetsRouter = createRouter({
         damagePct: z.number().min(0).max(100).nullable().optional(),
         grade: z.string().max(32).nullable().optional(),
         farmOrigin: z.string().max(255).nullable().optional(),
+        // remaining USGSA factor grid columns (Phase A)
+        foreignMaterialPct: z.number().min(0).max(100).nullable().optional(),
+        sbPct: z.number().min(0).max(100).nullable().optional(),
         adminPassword: z.string().optional(),
       }),
     )
@@ -683,10 +702,59 @@ export const sheetsRouter = createRouter({
         ...grades,
         grade: grades.grade?.trim() ? grades.grade.trim() : null,
         farmOrigin: grades.farmOrigin?.trim() ? grades.farmOrigin.trim() : null,
+        foreignMaterialPct: grades.foreignMaterialPct ?? null,
+        sbPct: grades.sbPct ?? null,
       };
-      const calc = load.netLbs
-        ? computeBushels(s.crop, load.netLbs, cleaned.moisturePct, cleaned.dockagePct)
-        : { grossBushels: null, shrinkPct: null, netBushels: null };
+
+      // Factor validation against the grade class's configured ranges (#3).
+      // No grade class declared → nothing to validate against → pass.
+      if (cleaned.grade) {
+        const { factorRulesFor } = await import("./gradingRouter");
+        const { validateGradeFactors } = await import("../contracts/grading");
+        const rules = await factorRulesFor(db, s.siteId, s.crop, cleaned.grade);
+        const violations = validateGradeFactors(rules, {
+          moisturePct: cleaned.moisturePct,
+          testWeight: cleaned.testWeightLbs,
+          dockagePct: cleaned.dockagePct,
+          damagePct: cleaned.damagePct,
+          foreignMaterialPct: cleaned.foreignMaterialPct,
+          sbPct: cleaned.sbPct,
+          proteinPct: cleaned.proteinPct,
+        });
+        if (violations.length > 0) {
+          const detail = violations
+            .map(
+              (v) =>
+                `${v.factor} ${v.value} is ${v.direction === "below-min" ? "below min" : "above max"} ` +
+                `(${v.minValue ?? "—"}–${v.maxValue ?? "—"}) for grade ${v.gradeClass}`,
+            )
+            .join("; ");
+          throw new Error(`Grade factors out of range — ${detail}`);
+        }
+      }
+
+      // Schedule-driven settlement breakdown (#3): moisture shrink from the
+      // crop's grading schedule (default 1.183%/point over base) + handling
+      // shrink + dockage, stamped on the load.
+      const { scheduleFor } = await import("./gradingRouter");
+      const { computeGradeAdjustments } = await import("../contracts/grading");
+      const schedule = await scheduleFor(db, s.siteId, s.crop);
+      const adj = computeGradeAdjustments(
+        s.crop,
+        load.netLbs,
+        cleaned.moisturePct,
+        cleaned.dockagePct,
+        schedule,
+      );
+      const calc = adj
+        ? {
+            shrinkLbs: adj.shrinkLbs,
+            dockLbs: adj.dockLbs,
+            shrinkPct: adj.shrinkPct,
+            grossBushels: adj.grossBushels,
+            netBushels: adj.netBushels,
+          }
+        : { shrinkLbs: null, dockLbs: null, shrinkPct: null, grossBushels: null, netBushels: null };
       await db
         .update(loads)
         .set({ ...cleaned, ...calc })
@@ -702,6 +770,8 @@ export const sheetsRouter = createRouter({
           testWeightLbs: load.testWeightLbs,
           proteinPct: load.proteinPct,
           damagePct: load.damagePct,
+          foreignMaterialPct: load.foreignMaterialPct,
+          sbPct: load.sbPct,
           grade: load.grade,
           farmOrigin: load.farmOrigin,
         },
@@ -713,7 +783,7 @@ export const sheetsRouter = createRouter({
         `Load ${load.loadNo} · moisture ${grades.moisturePct ?? "—"}% · dockage ${grades.dockagePct ?? "—"}% · TW ${grades.testWeightLbs ?? "—"} · protein ${grades.proteinPct ?? "—"}%`,
         loadId,
       );
-      return { ok: true, ...calc };
+      return { ok: true, ...calc, breakdown: adj };
     }),
 
   assignLoadBin: publicQuery
@@ -1030,32 +1100,46 @@ export const sheetsRouter = createRouter({
   // closed). Lots stay open — a fresh sheet can be started tomorrow.
   // Refused while any truck is still mid-weigh: a CLOSED sheet can no longer
   // be weighed out or voided, so that load would be stranded for good.
+  //
+  // Phase B (#5): closing the day also writes the FROZEN Daily Position
+  // Record — one immutable dpr_snapshots row per site × crop × program —
+  // BEFORE the office push, so the snapshots ride along in the EOD package.
   closeDay: publicQuery
     .input(z.object({ siteId: z.number().optional() }).optional())
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const operator = await resolveOperator(db, ctx.operator);
+      const { writeDprSnapshots } = await import("./lib/dpr");
       const openWhere = input?.siteId
         ? and(eq(weightSheets.status, "OPEN"), eq(weightSheets.siteId, input.siteId))
         : eq(weightSheets.status, "OPEN");
-      const open = await db.select({ id: weightSheets.id }).from(weightSheets).where(openWhere);
-    if (open.length === 0) return { closed: 0, office: null };
+      const open = await db.select({ id: weightSheets.id, siteId: weightSheets.siteId }).from(weightSheets).where(openWhere);
+      // target sites: the requested one, or every site that has open sheets
+      // (a site with no open sheets and no activity produces zero DPR rows)
+      const targetSiteIds = input?.siteId
+        ? [input.siteId]
+        : [...new Set(open.map((r) => r.siteId))];
+    if (open.length === 0 && !input?.siteId) return { closed: 0, office: null, dpr: {} };
     const ids = open.map((r) => r.id);
-    const inFlight = await db
-      .select({ ticketNo: weightSheets.ticketNo, loadNo: loads.loadNo })
-      .from(loads)
-      .innerJoin(weightSheets, eq(loads.sheetId, weightSheets.id))
-      .where(and(inArray(loads.sheetId, ids), isNull(loads.netLbs), isNull(loads.voidedAt)));
+    const inFlight = ids.length
+      ? await db
+          .select({ ticketNo: weightSheets.ticketNo, loadNo: loads.loadNo })
+          .from(loads)
+          .innerJoin(weightSheets, eq(loads.sheetId, weightSheets.id))
+          .where(and(inArray(loads.sheetId, ids), isNull(loads.netLbs), isNull(loads.voidedAt)))
+      : [];
     if (inFlight.length > 0) {
       const detail = inFlight.map((l) => `${l.ticketNo} load ${l.loadNo}`).join(", ");
       throw new Error(
         `Trucks still mid-weigh (${detail}) — finish or void those loads before closing the day`,
       );
     }
-    await db
-      .update(weightSheets)
-      .set({ status: "CLOSED", closeReason: "EOD", closedAt: new Date() })
-      .where(inArray(weightSheets.id, ids));
+    if (ids.length) {
+      await db
+        .update(weightSheets)
+        .set({ status: "CLOSED", closeReason: "EOD", closedAt: new Date() })
+        .where(inArray(weightSheets.id, ids));
+    }
     for (const id of ids) {
       await logEvent(id, "CLOSED", "End-of-day close — sheet locked");
       await writeAudit(db, {
@@ -1067,11 +1151,25 @@ export const sheetsRouter = createRouter({
         after: { status: "CLOSED", closeReason: "EOD" },
       });
     }
+    // Frozen DPR snapshots for the day being closed (#5) — one row per
+    // site × crop × program; immutable once written.
+    const dpr: Record<string, number> = {};
+    for (const sid of targetSiteIds) {
+      dpr[String(sid)] = await writeDprSnapshots(db, sid, new Date(), true);
+      await writeAudit(db, {
+        actor: operator,
+        action: "create",
+        entityType: "dpr_snapshot",
+        entityId: sid,
+        after: { siteId: sid, day: new Date(), rows: dpr[String(sid)] },
+        note: "DPR frozen at end-of-day close",
+      });
+    }
     // Upload the closed day to the main office portal, but only when one is
     // configured — and sync failures never block the close (logged in sync_log).
     const officeUrl = (await getSetting(db, "officeUrl")).trim();
     const office = officeUrl ? await pushEod(new Date()) : null;
-    return { closed: ids.length, office };
+    return { closed: ids.length, office, dpr };
   }),
 
   // ------------------------------------------------------ daily report
@@ -1091,6 +1189,7 @@ export const sheetsRouter = createRouter({
           sheet: weightSheets,
           farmerName: farmers.name,
           lotCode: lots.code,
+          lotProgram: lots.program,
           landlordName: landlords.name,
         })
         .from(loads)
@@ -1129,6 +1228,8 @@ export const sheetsRouter = createRouter({
         loadNo: r.load.loadNo,
         farmerName: r.farmerName,
         lotCode: r.lotCode,
+        // #17 — program: the load's denormalized tag, falling back to the lot's
+        program: r.load.program ?? r.lotProgram ?? "conventional",
         landlordName: r.landlordName,
         crop: r.sheet.crop,
         direction: r.sheet.direction,
@@ -1166,6 +1267,16 @@ export const sheetsRouter = createRouter({
         byFarmer.set(k, e);
       }
 
+      // #17 — per-program totals (identity-preserved segregation reporting)
+      const byProgram = new Map<string, { lbs: number; bu: number; count: number }>();
+      for (const l of done) {
+        const e = byProgram.get(l.program) ?? { lbs: 0, bu: 0, count: 0 };
+        e.lbs += l.netLbs ?? 0;
+        e.bu = round2(e.bu + (l.netBushels ?? 0));
+        e.count += 1;
+        byProgram.set(l.program, e);
+      }
+
       const binRows = await db
         .select({ bin: bins, siteName: sites.name })
         .from(bins)
@@ -1184,6 +1295,7 @@ export const sheetsRouter = createRouter({
         outboundBu: round2(sum(outbound.map((l) => l.netBushels ?? 0))),
         byCrop: [...byCrop.entries()].map(([crop, v]) => ({ crop, ...v })),
         byFarmer: [...byFarmer.entries()].map(([farmer, v]) => ({ farmer, ...v })),
+        byProgram: [...byProgram.entries()].map(([program, v]) => ({ program, ...v })),
         bins: binRows.map((r) => ({ ...r.bin, siteName: r.siteName })),
         loads: ledger,
       };

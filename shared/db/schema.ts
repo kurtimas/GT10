@@ -3,6 +3,7 @@ import {
   mysqlEnum,
   serial,
   bigint,
+  boolean,
   int,
   double,
   varchar,
@@ -183,6 +184,10 @@ export const loads = mysqlTable(
     shrinkPct: double("shrinkPct"),
     grossBushels: double("grossBushels"),
     netBushels: double("netBushels"),
+    // Phase B (#3): shrink/dock lbs computed from the crop's grading schedule
+    // when grades are saved (schedule-driven, not the flat grain.ts rate)
+    shrinkLbs: double("shrinkLbs"),
+    dockLbs: double("dockLbs"),
     // outbound loads can be linked to a shipment record (Phase 4 wires the API)
     shipmentId: bigint("shipmentId", { mode: "number", unsigned: true }).references(
       () => shipments.id,
@@ -601,6 +606,82 @@ export const binGradeOverrides = mysqlTable(
 );
 
 // ---------------------------------------------------------------------------
+// Phase B tables.
+// ---------------------------------------------------------------------------
+
+// Daily Position Record snapshots (#5) — one frozen row per site × day ×
+// crop × program, written at end-of-day close (sheets.closeDay). Frozen rows
+// are immutable; an open day can be regenerated (dpr.regenerate) which only
+// replaces rows with frozen = false. Balances come from the bin_movements
+// replay (book stock) plus signed shrink_entries; adjustmentsLbs is the
+// residual of lot-less manual corrections (bins.adjust). Ownership
+// (storage-vs-owned) is NOT modeled — out of scope (contracts/settlements).
+export const dprSnapshots = mysqlTable(
+  "dpr_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    day: varchar("day", { length: 10 }).notNull(), // YYYY-MM-DD
+    crop: varchar("crop", { length: 64 }).notNull(),
+    program: varchar("program", { length: 32 }).notNull().default("conventional"),
+    openingLbs: int("openingLbs").notNull().default(0),
+    receivedLbs: int("receivedLbs").notNull().default(0),
+    receivedBu: double("receivedBu").notNull().default(0),
+    shippedLbs: int("shippedLbs").notNull().default(0),
+    shippedBu: double("shippedBu").notNull().default(0),
+    transfersInLbs: int("transfersInLbs").notNull().default(0),
+    transfersOutLbs: int("transfersOutLbs").notNull().default(0),
+    // identifiable adjustments by shrink_entries kind (signed)
+    shrinkMoistureLbs: int("shrinkMoistureLbs").notNull().default(0),
+    shrinkHandlingLbs: int("shrinkHandlingLbs").notNull().default(0),
+    shrinkAerationLbs: int("shrinkAerationLbs").notNull().default(0),
+    shrinkErrorCorrectionLbs: int("shrinkErrorCorrectionLbs").notNull().default(0),
+    // lot-less manual bin adjustments (bins.adjust), signed net
+    adjustmentsLbs: int("adjustmentsLbs").notNull().default(0),
+    endingLbs: int("endingLbs").notNull().default(0),
+    endingBu: double("endingBu").notNull().default(0),
+    // true once written by closeDay — frozen rows are never regenerated
+    frozen: boolean("frozen").notNull().default(false),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => ({
+    siteDayIdx: index("dpr_site_day_idx").on(t.siteId, t.day),
+    scopeUnique: uniqueIndex("dpr_site_day_crop_program_unique").on(
+      t.siteId,
+      t.day,
+      t.crop,
+      t.program,
+    ),
+  }),
+);
+
+// Physical bin counts (#15) — periodic physical measurements the book stock
+// is reconciled against (mass-balance). Append-only.
+export const physicalCounts = mysqlTable(
+  "physical_counts",
+  {
+    id: serial("id").primaryKey(),
+    siteId: bigint("siteId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => sites.id),
+    binId: bigint("binId", { mode: "number", unsigned: true })
+      .notNull()
+      .references(() => bins.id),
+    countedLbs: int("countedLbs").notNull(),
+    countedAt: timestamp("countedAt").notNull(),
+    note: text("note"),
+    operator: varchar("operator", { length: 255 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => ({
+    siteIdx: index("physical_counts_site_idx").on(t.siteId),
+    binIdx: index("physical_counts_bin_idx").on(t.binId),
+  }),
+);
+
+// ---------------------------------------------------------------------------
 // Main-office sync — key/value settings (office URL + shared key) and a log
 // of every push/pull attempt. eod_reports is used by the OFFICE portal to
 // store one end-of-day summary per site per day; it exists in both schemas so
@@ -669,3 +750,5 @@ export type LabResult = typeof labResults.$inferSelect;
 export type Attachment = typeof attachments.$inferSelect;
 export type ShrinkEntry = typeof shrinkEntries.$inferSelect;
 export type BinGradeOverride = typeof binGradeOverrides.$inferSelect;
+export type DprSnapshot = typeof dprSnapshots.$inferSelect;
+export type PhysicalCount = typeof physicalCounts.$inferSelect;
