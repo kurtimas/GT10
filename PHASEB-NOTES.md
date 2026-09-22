@@ -198,3 +198,114 @@ Existing suites pass unchanged: 78/78 app, 79/79 office.
 - UI for all new endpoints (out of Phase B scope).
 - Storage-vs-owned DPR split (ownership not modeled; documented in responses).
 - Pre-existing office dev-server `bodyLimit` 500 quirk (from Phase 4) unchanged.
+
+# Phase B2 — office sync extension (#13) + the deferred router-level test suite
+
+Closes both Phase-B deferred items. Verified: `npm run check`, `npm test`,
+`npm run build` green in BOTH apps — **86/86 app, 88/88 office** (was 78/79;
++8 shared `phaseB.test.ts` tests run in both suites, +1 office receiver test).
+Live HTTP verification: both dev servers booted against FRESH embedded DBs
+(`GT_FORCE_OFFLINE=1`, temp `GT_OFFLINE_DB_PATH`s, office on :3000 with
+`SYNC_KEY`, app on :3417); a full Phase-B dataset was built on the plant over
+tRPC (graded load with schedule-driven shrink/dock stamps, splits, cleanout
+record+complete, fumigation, certificate, lab result, attachment upload,
+shrink entry, grade override, physical count), `sheets.closeDay` wrote the
+frozen DPR and pushed the EOD package over real HTTP, and all 18 office-side
+assertions passed — every `office.*` endpoint returned the mirrored entities
+with references re-keyed. Both servers stopped; ports 3000/3417 confirmed
+clear; temp DBs removed.
+
+## 13. Sync of the new tables — DONE
+
+Package (`shared/api/officeSync.ts`, `buildEodPackage`):
+
+- New sections: `gradingSchedules`, `gradeFactors`, `cleanouts`,
+  `fumigations`, `certificates`, `labResults`, `attachments` (METADATA only —
+  binaries stay plant-side; the mirror upserts the row so the portal knows
+  the document exists), `shrinkEntries`, `gradeOverrides`, `dprSnapshots`,
+  `physicalCounts`. All carry the plant row id (idempotency key) and natural-
+  key references (bin name / lot code / sheet ticket + loadNo), same as the
+  Phase-4 streams.
+- Cursor semantics: append-only tables select by `createdAt >= cursor`;
+  mutable registries (grading config, cleanouts, fumigations, certificates,
+  lab results) by `createdAt OR updatedAt >= cursor` — and the plant routers
+  now bump `updatedAt` explicitly on update (`grading.schedules/factors
+  .update`, `cleanouts.complete`, `fumigations.update`, certificate
+  reprint/void), because the embedded SQLite schema has no on-update trigger.
+- **Splits travel nested inside each load's payload** (`partyType`,
+  `partyName`, `splitPct`): the receiver rebuilds a sheet's loads wholesale,
+  so splits are rebuilt with them (the rebuild now deletes the sheet's
+  mirrored `load_splits` first — a re-upload can never stack duplicates).
+  Sheets whose loads gained new splits since the cursor are added to
+  `changedSheetIds`, so a split-only edit still re-pushes the sheet.
+- New columns on existing payloads: `program`/`practices`/`carbonNotes` on
+  lots, `program` on bins, `program`/`foreignMaterialPct`/`sbPct`/
+  `shrinkLbs`/`dockLbs` on loads. The people PULL (`/api/sync/people` +
+  `pullPeople`) carries the lot fields back down; fields absent from older
+  peers are tolerated both directions.
+
+Receiver (`office/api/syncReceiver.ts`):
+
+- Still ONE transaction for the whole package. New phases 4e–4i run after
+  sheets/shipments/movements so references resolve. Upsert rule unchanged:
+  plant row id first; on a cross-instance id collision the copy is found by a
+  per-table content key (e.g. certificates: site + certNumber + issuedAt;
+  DPR: the unique site+day+crop+program natural key) or inserted fresh.
+  Plant-wide grading rows (`siteId` null) are matched as "ours" by null
+  siteId. Certificate `shipmentId` is re-keyed via this package's shipment
+  map, falling back to an already-mirrored row at the plant id.
+- `receiveEod` response + the `sync_log` line now include all new counts.
+
+Office read endpoints (`office/api/officeRouter.ts`, all read-only, optional
+`siteId` + bounded `limit`, display names joined — the
+`office.shipments`/`office.movements` pattern):
+
+`office.gradingSchedules`, `office.gradeFactors`, `office.splits`,
+`office.cleanouts`, `office.fumigations`, `office.certificates`,
+`office.labResults`, `office.attachments`, `office.shrinkEntries`,
+`office.gradeOverrides`, `office.dpr.list/get` (list filters
+siteId/dayFrom/dayTo/program; responses carry `ownershipModeled: false`).
+
+## Tests — DONE
+
+- `shared/api/phaseB.test.ts` (8 tests, in-memory offline DB, runs in BOTH
+  suites): grade-factor out-of-range reject (below-min testWeight +
+  above-max FM, previous stamp untouched) and schedule-driven stamping math
+  (1.183%/point over base; shrinkPct is rounded to 2 decimals BEFORE the lbs
+  — 2.366% → 2.37% → 900.6 lbs on 38000; `CORN` is not in
+  `BUSHEL_WEIGHT_LBS` so bushels use the 60 lbs/bu fallback); splits
+  sum-to-100 accept/reject with the actual total in the error and the
+  rejected replace leaving the old set; cleanout genealogy cutoff (movement
+  before `cleanedAt` excluded from `trace.backward` composition); certificate
+  issue → reprint (old `reprinted`, new `issued` revision with the DUPLICATE
+  marker) → void with reason (double-void and reprint-of-void refused);
+  mass-balance flag requires BOTH >1% of book AND >500 bu (flagged −20%/−667
+  bu vs unflagged −1.5%/−25 bu); DPR regenerate pre-close → frozen by
+  `closeDay` → regenerate refused and row unchanged; trace forward + backward
+  on the 2-lots → 1-bin → 1-shipment fixture with FIFO % attribution
+  (83.33/16.67), including single-load forward.
+- `office/api/syncReceiver.test.ts` (+1 test): the same package received
+  TWICE → all 12 new tables upsert by plant row id (no duplicates), splits
+  rebuilt with the load, references re-keyed (bin/lot/shipment/load via
+  ticket+loadNo), plant-wide grading row keeps null siteId, new columns
+  stored, and every `office.*` endpoint serves the mirrored rows.
+
+## Bug found by the new tests (fixed)
+
+- **Offline boolean bind**: `dpr_snapshots.frozen` is the schema's only
+  boolean; drizzle's `MySqlBoolean` has no `mapToDriverValue`, so raw JS
+  booleans hit better-sqlite3 and threw ("can only bind numbers, strings,
+  bigints, buffers, and null") on ANY offline write or `eq(frozen, …)`
+  query — i.e. `closeDay`/`dprRegenerate` were broken on the embedded DB
+  since Phase B (the Phase-B smoke pass only exercised reads). Fixed by
+  `patchBooleanColumnsForOffline()` in `queries/connection.ts` (prototype
+  maps boolean ⇄ 1/0 while offline, same pattern as the existing timestamp
+  patch; inert on the MySQL path).
+
+## Still deferred
+
+- Attachment binaries never sync (metadata only, as specced).
+- UI for all new endpoints (plant + office) — Phase D.
+- Storage-vs-owned DPR split (ownership not modeled; `ownershipModeled:
+  false` in responses).
+- Pre-existing office dev-server `bodyLimit` 500 quirk (from Phase 4).

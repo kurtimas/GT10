@@ -126,7 +126,8 @@ export const gradingRouter = createRouter({
           where: eq(gradingSchedules.id, id),
         });
         if (!before) throw new Error("Grading schedule not found");
-        await db.update(gradingSchedules).set(data).where(eq(gradingSchedules.id, id));
+        // bump updatedAt explicitly — the changed-since push cursor reads it
+        await db.update(gradingSchedules).set({ ...data, updatedAt: new Date() }).where(eq(gradingSchedules.id, id));
         await writeAudit(db, {
           actor: operator,
           action: "update",
@@ -237,7 +238,7 @@ export const gradingRouter = createRouter({
         if (minValue != null && maxValue != null && minValue > maxValue) {
           throw new Error("minValue must be <= maxValue");
         }
-        await db.update(gradeFactors).set(data).where(eq(gradeFactors.id, id));
+        await db.update(gradeFactors).set({ ...data, updatedAt: new Date() }).where(eq(gradeFactors.id, id));
         await writeAudit(db, {
           actor: operator,
           action: "update",

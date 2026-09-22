@@ -1,15 +1,27 @@
-import { and, asc, eq, gte, inArray, lte, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or, type Column } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import {
+  attachments,
   auditLog,
+  binCleanouts,
+  binGradeOverrides,
   binMovements,
   bins,
+  certificates,
+  dprSnapshots,
   farmers,
+  fumigationLogs,
+  gradeFactors,
+  gradingSchedules,
+  labResults,
   landlords,
   loads,
+  loadSplits,
   lots,
+  physicalCounts,
   settings,
   shipments,
+  shrinkEntries,
   sites,
   syncLog,
   weightSheets,
@@ -109,7 +121,17 @@ async function buildEodPackage(db: Db, siteId: number, day: Date, changedSince: 
       .from(loads)
       .innerJoin(weightSheets, eq(loads.sheetId, weightSheets.id))
       .where(and(eq(weightSheets.siteId, siteId), gte(loads.createdAt, changedSince)));
-    changedSheetIds = [...new Set(changedLoads.map((r) => r.sheetId))];
+    // Phase B2: splits replaced on an old load must re-push its sheet too —
+    // the receiver rebuilds a sheet's loads (and their splits) wholesale.
+    const changedSplits = await db
+      .select({ sheetId: loads.sheetId })
+      .from(loadSplits)
+      .innerJoin(loads, eq(loadSplits.loadId, loads.id))
+      .innerJoin(weightSheets, eq(loads.sheetId, weightSheets.id))
+      .where(and(eq(weightSheets.siteId, siteId), gte(loadSplits.createdAt, changedSince)));
+    changedSheetIds = [
+      ...new Set([...changedLoads.map((r) => r.sheetId), ...changedSplits.map((r) => r.sheetId)]),
+    ];
   }
   const sheetRows = await db
     .select({
@@ -150,6 +172,22 @@ async function buildEodPackage(db: Db, siteId: number, day: Date, changedSince: 
     const arr = loadsBySheet.get(r.load.sheetId) ?? [];
     arr.push(r);
     loadsBySheet.set(r.load.sheetId, arr);
+  }
+
+  // Phase B2: load splits ride INSIDE each load's payload (party as a name —
+  // the office mirror re-keys it). The receiver rebuilds them wholesale with
+  // the load rows, so re-pushes never leave dangling/orphan splits behind.
+  const allLoadIds = loadRows.map((r) => r.load.id);
+  const splitRows = allLoadIds.length
+    ? await db.select().from(loadSplits).where(inArray(loadSplits.loadId, allLoadIds))
+    : [];
+  const farmerNameById = new Map(farmerRows.map((f) => [f.id, f.name]));
+  const landlordNameById = new Map(landlordRows.map((l) => [l.id, l.name]));
+  const splitsByLoadId = new Map<number, typeof splitRows>();
+  for (const s of splitRows) {
+    const arr = splitsByLoadId.get(s.loadId) ?? [];
+    arr.push(s);
+    splitsByLoadId.set(s.loadId, arr);
   }
 
   // totals mirror the daily report: loads weighed that day at this site.
@@ -216,6 +254,132 @@ async function buildEodPackage(db: Db, siteId: number, day: Date, changedSince: 
     .where(changedSince ? gte(auditLog.createdAt, changedSince) : undefined)
     .orderBy(asc(auditLog.createdAt), asc(auditLog.id));
 
+  // ---- Phase B2 streams: grading config, cleanouts, fumigations,
+  // certificates, lab results, attachment metadata, shrink entries, grade
+  // overrides, DPR snapshots, physical counts.
+  // Mutable registry tables (updatedAt exists) are selected by
+  // createdAt OR updatedAt >= cursor; the append-only ones by createdAt.
+  const touched = (createdCol: Column, updatedCol: Column) =>
+    changedSince ? or(gte(createdCol, changedSince), gte(updatedCol, changedSince)) : undefined;
+
+  const scheduleRows = await db
+    .select()
+    .from(gradingSchedules)
+    .where(
+      and(
+        or(eq(gradingSchedules.siteId, siteId), isNull(gradingSchedules.siteId)),
+        touched(gradingSchedules.createdAt, gradingSchedules.updatedAt),
+      ),
+    )
+    .orderBy(asc(gradingSchedules.id));
+
+  const factorRows = await db
+    .select()
+    .from(gradeFactors)
+    .where(
+      and(
+        or(eq(gradeFactors.siteId, siteId), isNull(gradeFactors.siteId)),
+        touched(gradeFactors.createdAt, gradeFactors.updatedAt),
+      ),
+    )
+    .orderBy(asc(gradeFactors.id));
+
+  const cleanoutRows = await db
+    .select()
+    .from(binCleanouts)
+    .where(
+      and(
+        eq(binCleanouts.siteId, siteId),
+        touched(binCleanouts.createdAt, binCleanouts.updatedAt),
+      ),
+    )
+    .orderBy(asc(binCleanouts.id));
+
+  const fumigationRows = await db
+    .select()
+    .from(fumigationLogs)
+    .where(
+      and(
+        eq(fumigationLogs.siteId, siteId),
+        touched(fumigationLogs.createdAt, fumigationLogs.updatedAt),
+      ),
+    )
+    .orderBy(asc(fumigationLogs.id));
+
+  const certificateRows = await db
+    .select()
+    .from(certificates)
+    .where(
+      and(
+        eq(certificates.siteId, siteId),
+        touched(certificates.createdAt, certificates.updatedAt),
+      ),
+    )
+    .orderBy(asc(certificates.id));
+
+  const labResultRows = await db
+    .select()
+    .from(labResults)
+    .where(
+      and(eq(labResults.siteId, siteId), touched(labResults.createdAt, labResults.updatedAt)),
+    )
+    .orderBy(asc(labResults.id));
+
+  // lab-result → load references travel as sheet ticket + loadNo (natural key)
+  const labLoadIds = [
+    ...new Set(labResultRows.map((r) => r.loadId).filter((v): v is number => v != null)),
+  ];
+  const labLoadInfo = labLoadIds.length
+    ? await db
+        .select({ id: loads.id, loadNo: loads.loadNo, ticketNo: weightSheets.ticketNo })
+        .from(loads)
+        .innerJoin(weightSheets, eq(loads.sheetId, weightSheets.id))
+        .where(inArray(loads.id, labLoadIds))
+    : [];
+  const labLoadById = new Map(labLoadInfo.map((l) => [l.id, l]));
+
+  // METADATA ONLY — attachment binaries stay plant-side (data/attachments/);
+  // the office mirror upserts the row so it knows the document exists.
+  const attachmentRows = await db
+    .select()
+    .from(attachments)
+    .where(
+      and(eq(attachments.siteId, siteId), changedSince ? gte(attachments.createdAt, changedSince) : undefined),
+    )
+    .orderBy(asc(attachments.id));
+
+  const shrinkRows = await db
+    .select()
+    .from(shrinkEntries)
+    .where(
+      and(eq(shrinkEntries.siteId, siteId), changedSince ? gte(shrinkEntries.createdAt, changedSince) : undefined),
+    )
+    .orderBy(asc(shrinkEntries.id));
+
+  const overrideRows = await db
+    .select()
+    .from(binGradeOverrides)
+    .where(
+      and(eq(binGradeOverrides.siteId, siteId), changedSince ? gte(binGradeOverrides.createdAt, changedSince) : undefined),
+    )
+    .orderBy(asc(binGradeOverrides.id));
+
+  const dprRows = await db
+    .select()
+    .from(dprSnapshots)
+    .where(
+      and(eq(dprSnapshots.siteId, siteId), changedSince ? gte(dprSnapshots.createdAt, changedSince) : undefined),
+    )
+    .orderBy(asc(dprSnapshots.day), asc(dprSnapshots.id));
+
+  const physicalCountRows = await db
+    .select()
+    .from(physicalCounts)
+    .where(
+      and(eq(physicalCounts.siteId, siteId), changedSince ? gte(physicalCounts.createdAt, changedSince) : undefined),
+    )
+    .orderBy(asc(physicalCounts.id));
+
   return {
     site: { name: site.name, location: site.location },
     day: dayKey(day),
@@ -228,6 +392,11 @@ async function buildEodPackage(db: Db, siteId: number, day: Date, changedSince: 
       crop: r.lot.crop,
       landlordSplitPct: r.lot.landlordSplitPct,
       status: r.lot.status,
+      // Phase A fields (Phase B2 sync): identity-preserved program +
+      // farm-of-origin sustainability notes
+      program: r.lot.program,
+      practices: r.lot.practices,
+      carbonNotes: r.lot.carbonNotes,
       notes: r.lot.notes,
     })),
     bins: binRows.map((b) => ({
@@ -235,6 +404,7 @@ async function buildEodPackage(db: Db, siteId: number, day: Date, changedSince: 
       crop: b.crop,
       capacityLbs: b.capacityLbs,
       currentLbs: b.currentLbs,
+      program: b.program,
     })),
     sheets: sheetRows.map((r) => ({
       ticketNo: r.sheet.ticketNo,
@@ -267,9 +437,24 @@ async function buildEodPackage(db: Db, siteId: number, day: Date, changedSince: 
         damagePct: l.load.damagePct,
         grade: l.load.grade,
         farmOrigin: l.load.farmOrigin,
+        // Phase A/B columns (Phase B2 sync): remaining USGSA factor grid,
+        // denormalized program, and the schedule-driven shrink/dock stamps
+        foreignMaterialPct: l.load.foreignMaterialPct,
+        sbPct: l.load.sbPct,
+        program: l.load.program,
+        shrinkLbs: l.load.shrinkLbs,
+        dockLbs: l.load.dockLbs,
         shrinkPct: l.load.shrinkPct,
         grossBushels: l.load.grossBushels,
         netBushels: l.load.netBushels,
+        splits: (splitsByLoadId.get(l.load.id) ?? []).map((sp) => ({
+          partyType: sp.partyType,
+          partyName:
+            sp.partyType === "farmer"
+              ? (farmerNameById.get(sp.partyId) ?? null)
+              : (landlordNameById.get(sp.partyId) ?? null),
+          splitPct: sp.splitPct,
+        })),
         voidedAt: l.load.voidedAt,
         voidReason: l.load.voidReason,
       })),
@@ -312,6 +497,145 @@ async function buildEodPackage(db: Db, siteId: number, day: Date, changedSince: 
       afterJson: a.afterJson,
       note: a.note,
       createdAt: a.createdAt,
+    })),
+    // Phase B2 sections. References travel as natural keys (bin name / lot
+    // code / sheet ticket + loadNo); siteId null (plant-wide grading config)
+    // travels as siteScoped: false. All carry the plant row id — the
+    // receiver's idempotency key.
+    gradingSchedules: scheduleRows.map((g) => ({
+      id: g.id,
+      siteScoped: g.siteId != null,
+      crop: g.crop,
+      moistureShrinkPerPoint: g.moistureShrinkPerPoint,
+      baseMoisturePct: g.baseMoisturePct,
+      handlingShrinkPct: g.handlingShrinkPct,
+      dockageRules: g.dockageRules,
+      createdAt: g.createdAt,
+      updatedAt: g.updatedAt,
+    })),
+    gradeFactors: factorRows.map((f) => ({
+      id: f.id,
+      siteScoped: f.siteId != null,
+      crop: f.crop,
+      gradeClass: f.gradeClass,
+      factor: f.factor,
+      minValue: f.minValue,
+      maxValue: f.maxValue,
+      createdAt: f.createdAt,
+      updatedAt: f.updatedAt,
+    })),
+    cleanouts: cleanoutRows.map((r) => ({
+      id: r.id,
+      binName: binNameById.get(r.binId) ?? null,
+      emptiedAt: r.emptiedAt,
+      cleanedAt: r.cleanedAt,
+      method: r.method,
+      note: r.note,
+      operator: r.operator,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    })),
+    fumigations: fumigationRows.map((r) => ({
+      id: r.id,
+      binName: binNameById.get(r.binId) ?? null,
+      product: r.product,
+      dosage: r.dosage,
+      appliedAt: r.appliedAt,
+      exposureHours: r.exposureHours,
+      aerationClearedAt: r.aerationClearedAt,
+      applicator: r.applicator,
+      note: r.note,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    })),
+    certificates: certificateRows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      certNumber: r.certNumber,
+      issuedAt: r.issuedAt,
+      status: r.status,
+      lotCode: r.lotId != null ? (lotCodeById.get(r.lotId) ?? null) : null,
+      shipmentId: r.shipmentId, // plant-side id — receiver re-keys
+      note: r.note,
+      fileRef: r.fileRef,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    })),
+    labResults: labResultRows.map((r) => ({
+      id: r.id,
+      sampleDate: r.sampleDate,
+      labName: r.labName,
+      testType: r.testType,
+      result: r.result,
+      passFail: r.passFail,
+      lotCode: r.lotId != null ? (lotCodeById.get(r.lotId) ?? null) : null,
+      loadTicketNo: r.loadId != null ? (labLoadById.get(r.loadId)?.ticketNo ?? null) : null,
+      loadNo: r.loadId != null ? (labLoadById.get(r.loadId)?.loadNo ?? null) : null,
+      binName: r.binId != null ? (binNameById.get(r.binId) ?? null) : null,
+      note: r.note,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    })),
+    attachments: attachmentRows.map((r) => ({
+      id: r.id,
+      entityType: r.entityType,
+      entityId: r.entityId, // plant-side id (raw mirror, like audit_log)
+      filename: r.filename,
+      mime: r.mime,
+      size: r.size,
+      storageRef: r.storageRef,
+      uploadedBy: r.uploadedBy,
+      createdAt: r.createdAt,
+    })),
+    shrinkEntries: shrinkRows.map((r) => ({
+      id: r.id,
+      binName: binNameById.get(r.binId) ?? null,
+      kind: r.kind,
+      quantityLbs: r.quantityLbs,
+      effectiveDate: r.effectiveDate,
+      note: r.note,
+      operator: r.operator,
+      createdAt: r.createdAt,
+    })),
+    gradeOverrides: overrideRows.map((r) => ({
+      id: r.id,
+      binName: binNameById.get(r.binId) ?? null,
+      factor: r.factor,
+      value: r.value,
+      reason: r.reason,
+      operator: r.operator,
+      createdAt: r.createdAt,
+    })),
+    dprSnapshots: dprRows.map((r) => ({
+      id: r.id,
+      day: r.day,
+      crop: r.crop,
+      program: r.program,
+      openingLbs: r.openingLbs,
+      receivedLbs: r.receivedLbs,
+      receivedBu: r.receivedBu,
+      shippedLbs: r.shippedLbs,
+      shippedBu: r.shippedBu,
+      transfersInLbs: r.transfersInLbs,
+      transfersOutLbs: r.transfersOutLbs,
+      shrinkMoistureLbs: r.shrinkMoistureLbs,
+      shrinkHandlingLbs: r.shrinkHandlingLbs,
+      shrinkAerationLbs: r.shrinkAerationLbs,
+      shrinkErrorCorrectionLbs: r.shrinkErrorCorrectionLbs,
+      adjustmentsLbs: r.adjustmentsLbs,
+      endingLbs: r.endingLbs,
+      endingBu: r.endingBu,
+      frozen: r.frozen,
+      createdAt: r.createdAt,
+    })),
+    physicalCounts: physicalCountRows.map((r) => ({
+      id: r.id,
+      binName: binNameById.get(r.binId) ?? null,
+      countedLbs: r.countedLbs,
+      countedAt: r.countedAt,
+      note: r.note,
+      operator: r.operator,
+      createdAt: r.createdAt,
     })),
     totals: {
       sheetsOpened: sheetsOpened.length,
@@ -455,6 +779,9 @@ export async function pullPeople(): Promise<SyncResult> {
         crop: string;
         landlordSplitPct: number;
         status: "OPEN" | "CLOSED";
+        program?: string;
+        practices?: string | null;
+        carbonNotes?: string | null;
         notes: string | null;
       }[];
     };
@@ -505,6 +832,11 @@ export async function pullPeople(): Promise<SyncResult> {
         landlordSplitPct: lot.landlordSplitPct,
         status: lot.status,
         closedAt: lot.status === "CLOSED" ? new Date() : null,
+        // Phase A fields ride along when the office sends them (older office
+        // builds omit them — keep the plant's values then)
+        ...(lot.program !== undefined ? { program: lot.program } : {}),
+        ...(lot.practices !== undefined ? { practices: lot.practices } : {}),
+        ...(lot.carbonNotes !== undefined ? { carbonNotes: lot.carbonNotes } : {}),
         notes: lot.notes,
       };
       if (existing) {

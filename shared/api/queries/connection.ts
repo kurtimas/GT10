@@ -3,7 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import mysql from "mysql2/promise";
 import { drizzle as drizzleMysql, type MySql2Database } from "drizzle-orm/mysql2";
-import { MySqlTimestamp } from "drizzle-orm/mysql-core";
+import { MySqlBoolean, MySqlTimestamp } from "drizzle-orm/mysql-core";
 import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
 import * as schema from "../../db/schema";
 import * as sqliteSchema from "../../db/sqliteSchema";
@@ -537,6 +537,7 @@ function initSqlite(): Db {
   }
   applySqliteUpgrades(sqlite);
   patchTimestampColumnsForOffline();
+  patchBooleanColumnsForOffline();
   const sqliteDb = drizzleSqlite(sqlite, { schema: sqliteSchema });
   // Cast so all router call-sites typecheck against the MySQL db type.
   return patchOfflineWrites(sqliteDb) as unknown as Db;
@@ -587,6 +588,23 @@ function patchTimestampColumnsForOffline() {
   proto.mapFromDriverValue = function (value: unknown) {
     if (typeof value === "number") return new Date(value);
     return origFromDriver.call(this, value);
+  };
+}
+
+/**
+ * MySqlBoolean (dpr_snapshots.frozen) has NO mapToDriverValue — drizzle hands
+ * the raw JS boolean to the driver, which mysql2 accepts but better-sqlite3
+ * refuses ("can only bind numbers, strings, bigints, buffers, and null").
+ * While offline, map booleans to 1/0 on the way out (reads already map back:
+ * MySqlBoolean.mapFromDriverValue treats 1 as true). Same inert-on-MySQL
+ * caveat as the timestamp patch above.
+ */
+function patchBooleanColumnsForOffline() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const proto = MySqlBoolean.prototype as any;
+  proto.mapToDriverValue = function (value: unknown) {
+    if (typeof value === "boolean") return value ? 1 : 0;
+    return value;
   };
 }
 

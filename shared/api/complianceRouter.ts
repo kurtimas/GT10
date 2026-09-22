@@ -163,6 +163,7 @@ export const complianceRouter = createRouter({
         if (before.cleanedAt) throw new Error("Cleanout is already marked complete");
         const patch = {
           cleanedAt: input.cleanedAt ?? new Date(),
+          updatedAt: new Date(), // changed-since sync cursor reads this
           ...(input.method !== undefined ? { method: input.method } : {}),
           ...(input.note !== undefined ? { note: input.note } : {}),
         };
@@ -249,7 +250,7 @@ export const complianceRouter = createRouter({
           where: eq(fumigationLogs.id, id),
         });
         if (!before) throw new Error("Fumigation log not found");
-        await db.update(fumigationLogs).set(data).where(eq(fumigationLogs.id, id));
+        await db.update(fumigationLogs).set({ ...data, updatedAt: new Date() }).where(eq(fumigationLogs.id, id));
         await writeAudit(db, {
           actor: operator,
           action: "update",
@@ -348,7 +349,7 @@ export const complianceRouter = createRouter({
         const newId = await db.transaction(async (tx) => {
           await tx
             .update(certificates)
-            .set({ status: "reprinted" })
+            .set({ status: "reprinted", updatedAt: new Date() })
             .where(eq(certificates.id, before.id));
           const dupNote =
             `DUPLICATE — reprint of certificate ${before.certNumber} (#${before.id})` +
@@ -406,7 +407,7 @@ export const complianceRouter = createRouter({
         if (before.status === "void") throw new Error("Certificate is already void");
         await db
           .update(certificates)
-          .set({ status: "void", note: `${before.note ?? ""} [VOID: ${input.voidReason}]`.trim() })
+          .set({ status: "void", note: `${before.note ?? ""} [VOID: ${input.voidReason}]`.trim(), updatedAt: new Date() })
           .where(eq(certificates.id, input.id));
         await writeAudit(db, {
           actor: operator,
