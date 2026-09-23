@@ -37,6 +37,7 @@ import { AdminPasswordField } from "@/components/AdminPasswordField";
 import { useAdminGate } from "@/hooks/useAdminGate";
 import { QueryError } from "@shared/src/components/QueryError";
 import { CROPS, type Crop } from "@contracts/grain";
+import { PROGRAMS, DEFAULT_PROGRAM, type Program } from "@contracts/compliance";
 import type { LotRow } from "@contracts/types";
 import type { Farmer } from "@db/schema";
 
@@ -324,6 +325,7 @@ function LotDialog({ onClose }: { onClose: () => void }) {
   const [code, setCode] = useState("");
   const [codeEdited, setCodeEdited] = useState(false);
   const [crop, setCrop] = useState<Crop>("Corn");
+  const [program, setProgram] = useState<Program>(DEFAULT_PROGRAM);
   const [landlordId, setLandlordId] = useState(NO_LANDLORD);
   const [splitPct, setSplitPct] = useState("");
   const [notes, setNotes] = useState("");
@@ -381,6 +383,7 @@ function LotDialog({ onClose }: { onClose: () => void }) {
       landlordId: landlordId === NO_LANDLORD ? undefined : Number(landlordId),
       code: code.trim(),
       crop,
+      program,
       landlordSplitPct: split,
       notes: notes.trim() || undefined,
     });
@@ -433,6 +436,25 @@ function LotDialog({ onClose }: { onClose: () => void }) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Program</Label>
+            <Select value={program} onValueChange={(v) => setProgram(v as Program)}>
+              <SelectTrigger aria-label="Program">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PROGRAMS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Segregation program — organic / non-GMO lots must stay in matching bins.
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -588,8 +610,134 @@ function LotStatusDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Tabs
+// Lot edit (program / landlord / notes) — #17 program segregation
 // ---------------------------------------------------------------------------
+
+function LotEditDialog({ lot, onClose }: { lot: LotRow; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const landlordsQuery = trpc.people.landlords.list.useQuery();
+  const landlords = landlordsQuery.data ?? [];
+
+  const [program, setProgram] = useState<Program>((lot.program as Program) ?? DEFAULT_PROGRAM);
+  const [landlordId, setLandlordId] = useState(
+    lot.landlordId != null ? String(lot.landlordId) : NO_LANDLORD,
+  );
+  const [splitPct, setSplitPct] = useState(
+    lot.landlordId != null ? String(lot.landlordSplitPct) : "",
+  );
+  const [notes, setNotes] = useState(lot.notes ?? "");
+
+  const updateLot = trpc.people.lots.update.useMutation({
+    onSuccess: async () => {
+      toast.success(`Lot ${lot.code} updated`);
+      onClose();
+      await utils.people.lots.list.invalidate();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const submit = () => {
+    let split: number | undefined;
+    let landlord: number | null;
+    if (landlordId === NO_LANDLORD) {
+      landlord = null;
+      split = 0;
+    } else {
+      const n = Number(splitPct);
+      if (splitPct.trim() === "" || !Number.isFinite(n) || n < 0 || n > 100) {
+        toast.error("Landlord split must be a number between 0 and 100");
+        return;
+      }
+      landlord = Number(landlordId);
+      split = n;
+    }
+    updateLot.mutate({
+      id: lot.id,
+      program,
+      landlordId: landlord,
+      landlordSplitPct: split,
+      notes: notes.trim() || undefined,
+    });
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit lot {lot.code}</DialogTitle>
+          <DialogDescription>
+            Program, landlord split, and notes. Farmer and crop are fixed at
+            creation.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Program</Label>
+            <Select value={program} onValueChange={(v) => setProgram(v as Program)}>
+              <SelectTrigger aria-label="Program">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PROGRAMS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Landlord</Label>
+              <Select value={landlordId} onValueChange={setLandlordId}>
+                <SelectTrigger aria-label="Landlord">
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_LANDLORD}>None</SelectItem>
+                  {landlords.map((l) => (
+                    <SelectItem key={l.id} value={String(l.id)}>
+                      {l.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {landlordId !== NO_LANDLORD && (
+              <div className="space-y-1.5">
+                <Label htmlFor="lot-edit-split">Landlord split %</Label>
+                <Input
+                  id="lot-edit-split"
+                  inputMode="decimal"
+                  value={splitPct}
+                  onChange={(e) => setSplitPct(e.target.value)}
+                  className="font-mono text-right"
+                />
+              </div>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lot-edit-notes">Notes</Label>
+            <Textarea
+              id="lot-edit-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={updateLot.isPending}>
+            {updateLot.isPending ? "Saving…" : "Save changes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function FarmersTab() {
   const farmersQuery = trpc.people.farmers.list.useQuery();
@@ -749,11 +897,15 @@ function LandlordsTab() {
 function LotsTab() {
   const lotsQuery = trpc.people.lots.list.useQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [programFilter, setProgramFilter] = useState("all");
+  const [editLot, setEditLot] = useState<LotRow | null>(null);
   const [statusChange, setStatusChange] = useState<{
     lot: LotRow;
     status: "OPEN" | "CLOSED";
   } | null>(null);
-  const lots = lotsQuery.data ?? [];
+  const allLots = lotsQuery.data ?? [];
+  const lots =
+    programFilter === "all" ? allLots : allLots.filter((l) => l.program === programFilter);
 
   return (
     <Card>
@@ -772,6 +924,23 @@ function LotsTab() {
             Create lot
           </Button>
         </div>
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-4 py-2">
+          <span className="gt-eyebrow mr-1">Program</span>
+          {["all", ...PROGRAMS].map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setProgramFilter(p)}
+              className={`rounded-full border px-2.5 py-0.5 font-mono text-[11px] transition-colors ${
+                programFilter === p
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {p === "all" ? "All" : p}
+            </button>
+          ))}
+        </div>
         {lotsQuery.isError && (
           <div className="border-b border-border p-4">
             <QueryError
@@ -788,6 +957,7 @@ function LotsTab() {
               <TableHead>Code</TableHead>
               <TableHead>Farmer</TableHead>
               <TableHead>Crop</TableHead>
+              <TableHead>Program</TableHead>
               <TableHead>Landlord</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Notes</TableHead>
@@ -797,10 +967,10 @@ function LotsTab() {
           </TableHeader>
           <TableBody>
             {lotsQuery.isPending ? (
-              <TableSkeletonRows cols={8} />
+              <TableSkeletonRows cols={9} />
             ) : lotsQuery.isError ? null : lots.length === 0 ? (
               <EmptyRow
-                cols={8}
+                cols={9}
                 message="No lots yet — create one per farmer field before harvest."
               />
             ) : (
@@ -811,6 +981,15 @@ function LotsTab() {
                   </TableCell>
                   <TableCell>{lot.farmerName ?? "—"}</TableCell>
                   <TableCell>{lot.crop}</TableCell>
+                  <TableCell>
+                    {lot.program && lot.program !== "conventional" ? (
+                      <Badge variant="secondary" className="font-mono text-[10px]">
+                        {lot.program}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">conventional</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {lot.landlordId && lot.landlordName ? (
                       <span className="inline-flex items-center gap-2">
@@ -837,6 +1016,15 @@ function LotsTab() {
                     {fmtDate(lot.createdAt)}
                   </TableCell>
                   <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditLot(lot)}
+                      >
+                        <Pencil className="mr-1 h-3 w-3" />
+                        Edit
+                      </Button>
                     {lot.status === "OPEN" ? (
                       <Button
                         variant="outline"
@@ -854,6 +1042,7 @@ function LotsTab() {
                         Reopen
                       </Button>
                     )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -862,6 +1051,13 @@ function LotsTab() {
         </Table>
       </CardContent>
       {dialogOpen && <LotDialog onClose={() => setDialogOpen(false)} />}
+      {editLot && (
+        <LotEditDialog
+          key={editLot.id}
+          lot={editLot}
+          onClose={() => setEditLot(null)}
+        />
+      )}
       {statusChange && (
         <LotStatusDialog
           lot={statusChange.lot}

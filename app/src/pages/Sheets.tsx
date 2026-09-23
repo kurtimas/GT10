@@ -43,9 +43,11 @@ import { Separator } from "@shared/src/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@shared/src/components/ui/alert";
 import { QueryError } from "@shared/src/components/QueryError";
 import { GradesDialog } from "@/components/GradesDialog";
+import { SplitsDialog } from "@/components/SplitsDialog";
 import { AdminPasswordField } from "@/components/AdminPasswordField";
 import { TicketPrint } from "@/components/TicketPrint";
 import { CROPS, fmtBu, fmtLbs } from "@contracts/grain";
+import { PROGRAMS } from "@contracts/compliance";
 import type { LoadRow, SheetRow } from "@contracts/types";
 
 // ---------------------------------------------------------------- helpers
@@ -138,6 +140,7 @@ export default function SheetsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [farmerId, setFarmerId] = useState("all");
   const [crop, setCrop] = useState("all");
+  const [program, setProgram] = useState("all");
   const [status, setStatus] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -158,12 +161,13 @@ export default function SheetsPage() {
       ...(debouncedSearch ? { search: debouncedSearch } : {}),
       ...(farmerId !== "all" ? { farmerId: Number(farmerId) } : {}),
       ...(crop !== "all" ? { crop } : {}),
+      ...(program !== "all" ? { program } : {}),
       ...(status !== "all" ? { status: status as SheetRow["status"] } : {}),
       ...(dateFrom ? { dateFrom } : {}),
       ...(dateTo ? { dateTo } : {}),
       ...(showVoided ? { includeVoided: true } : {}),
     }),
-    [siteId, debouncedSearch, farmerId, crop, status, dateFrom, dateTo, showVoided],
+    [siteId, debouncedSearch, farmerId, crop, program, status, dateFrom, dateTo, showVoided],
   );
 
   const sheetsQ = trpc.sheets.list.useQuery(filters, { enabled: siteId != null });
@@ -173,6 +177,7 @@ export default function SheetsPage() {
     debouncedSearch !== "" ||
     farmerId !== "all" ||
     crop !== "all" ||
+    program !== "all" ||
     status !== "all" ||
     dateFrom !== "" ||
     dateTo !== "";
@@ -182,6 +187,7 @@ export default function SheetsPage() {
     setDebouncedSearch("");
     setFarmerId("all");
     setCrop("all");
+    setProgram("all");
     setStatus("all");
     setDateFrom("");
     setDateTo("");
@@ -243,6 +249,22 @@ export default function SheetsPage() {
                 {CROPS.map((c) => (
                   <SelectItem key={c} value={c}>
                     {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Program</Label>
+            <Select value={program} onValueChange={setProgram}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder="All programs" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All programs</SelectItem>
+                {PROGRAMS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -504,6 +526,7 @@ function SheetDetailDialog({
   const binsQ = trpc.core.bins.list.useQuery(undefined, { enabled: open });
 
   const [gradesLoad, setGradesLoad] = useState<LoadRow | null>(null);
+  const [splitsLoad, setSplitsLoad] = useState<LoadRow | null>(null);
   const [weightsLoad, setWeightsLoad] = useState<LoadRow | null>(null);
   const [binLoad, setBinLoad] = useState<LoadRow | null>(null);
   const [voidTarget, setVoidTarget] = useState<LoadRow | null>(null);
@@ -821,6 +844,14 @@ function SheetDetailDialog({
                                   variant="ghost"
                                   size="sm"
                                   className="h-6 px-2 font-mono text-[10px]"
+                                  onClick={() => setSplitsLoad(l)}
+                                >
+                                  Splits
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2 font-mono text-[10px]"
                                   onClick={() => setWeightsLoad(l)}
                                   disabled={onScale}
                                   title={onScale ? "Finish weighing before correcting" : undefined}
@@ -892,9 +923,18 @@ function SheetDetailDialog({
             key={gradesLoad.id}
             load={gradesLoad}
             crop={sheet.crop}
+            siteId={sheet.siteId}
             locked={locked}
             open
             onOpenChange={(o) => !o && setGradesLoad(null)}
+          />
+        )}
+        {splitsLoad && (
+          <SplitsDialog
+            key={splitsLoad.id}
+            load={splitsLoad}
+            open
+            onOpenChange={(o) => !o && setSplitsLoad(null)}
           />
         )}
         {weightsLoad && (

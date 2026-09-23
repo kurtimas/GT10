@@ -15,6 +15,9 @@ import {
   Truck,
   ScrollText,
   CloudOff,
+  Route as RouteIcon,
+  Award,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@shared/src/lib/utils";
 import { useServerOnline } from "@shared/src/providers/trpc";
@@ -39,8 +42,11 @@ const NAV_ITEMS = [
   { to: "/scale", label: "Scale", icon: ScaleIcon },
   { to: "/sheets", label: "Weight Sheets", icon: FileSpreadsheet },
   { to: "/shipments", label: "Shipments", icon: Truck },
+  { to: "/trace", label: "Trace / Recall", icon: RouteIcon },
   { to: "/bins", label: "Bins", icon: Warehouse },
   { to: "/people", label: "Farmers & Lots", icon: Users },
+  { to: "/certificates", label: "Certificates", icon: Award },
+  { to: "/grading", label: "Grading", icon: SlidersHorizontal },
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/audit", label: "Audit Log", icon: ScrollText },
 ] as const;

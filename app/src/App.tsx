@@ -8,6 +8,9 @@ import Bins from "./pages/Bins";
 import People from "./pages/People";
 import Reports from "./pages/Reports";
 import Audit from "./pages/Audit";
+import Trace from "./pages/Trace";
+import Certificates from "./pages/Certificates";
+import Grading from "./pages/Grading";
 import NotFound from "@shared/src/pages/NotFound";
 
 export default function App() {
@@ -19,8 +22,11 @@ export default function App() {
         <Route path="/scale/:sheetId" element={<Scale />} />
         <Route path="/sheets" element={<Sheets />} />
         <Route path="/shipments" element={<Shipments />} />
+        <Route path="/trace" element={<Trace />} />
         <Route path="/bins" element={<Bins />} />
         <Route path="/people" element={<People />} />
+        <Route path="/certificates" element={<Certificates />} />
+        <Route path="/grading" element={<Grading />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="*" element={<NotFound />} />

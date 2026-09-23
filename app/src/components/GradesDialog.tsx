@@ -1,12 +1,17 @@
-// Load grading / enriched intake dialog (Phase 5) — shared by the Sheets
-// archive and the Scale page so the operator can grade right after
-// weigh-out: moisture, dockage, test weight, protein (drive the bushel
-// math) plus damage %, grade, and farm/field origin (traceability only).
+// Load grading / enriched intake dialog (Phase 5; Phase C #3) — shared by the
+// Sheets archive and the Scale page: moisture, dockage, test weight, protein
+// plus damage %, foreign material %, S&B %, grade, and farm/field origin.
 // Every field is optional; blank clears the stored value.
+//
+// Phase C additions: the schedule-driven shrink/dock breakdown is previewed
+// live (grading.preview) before save, the server's computed breakdown is
+// shown after a successful save, and grade-factor validation rejections are
+// surfaced inline (and toasted).
 
 import { useState } from "react";
 import { trpc } from "@shared/src/lib/trpc";
 import { toast } from "@shared/src/components/ui/sonner";
+import { Alert, AlertDescription, AlertTitle } from "@shared/src/components/ui/alert";
 import { Button } from "@shared/src/components/ui/button";
 import {
   Dialog,
@@ -18,7 +23,8 @@ import {
 } from "@shared/src/components/ui/dialog";
 import { Input } from "@shared/src/components/ui/input";
 import { Label } from "@shared/src/components/ui/label";
-import { computeBushels, fmtBu } from "@contracts/grain";
+import { computeBushels, fmtBu, fmtLbs } from "@contracts/grain";
+import type { GradeAdjustmentResult } from "@contracts/grading";
 import type { LoadRow } from "@contracts/types";
 import { AdminPasswordField } from "@/components/AdminPasswordField";
 
@@ -33,9 +39,53 @@ function numStr(n: number | null | undefined): string {
   return n == null ? "" : String(n);
 }
 
+/** Schedule-driven shrink/dock breakdown panel (preview + post-save). */
+function BreakdownPanel({
+  result,
+  title,
+  tone,
+}: {
+  result: GradeAdjustmentResult;
+  title: string;
+  tone: "preview" | "saved";
+}) {
+  return (
+    <div
+      className={
+        tone === "saved"
+          ? "rounded-md border border-stable/40 bg-stable/10 p-3 font-mono text-xs"
+          : "rounded-md border border-live/30 bg-readout p-3 font-mono text-xs text-sidebar-foreground"
+      }
+    >
+      <div className="gt-eyebrow mb-1">{title}</div>
+      <div className="flex justify-between">
+        <span className="opacity-60">Moisture shrink ({result.pointsOver} pts over base)</span>
+        <span>-{fmtLbs(result.moistureShrinkLbs)} lb</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="opacity-60">Handling shrink</span>
+        <span>-{fmtLbs(result.handlingLbs)} lb</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="opacity-60">Dockage</span>
+        <span>-{fmtLbs(result.dockLbs)} lb</span>
+      </div>
+      <div className="mt-1 flex justify-between border-t border-foreground/20 pt-1 font-semibold">
+        <span className="opacity-60">
+          Total deduction ({result.shrinkPct}%) · Net
+        </span>
+        <span>
+          -{fmtLbs(result.shrinkLbs + result.dockLbs)} lb → {fmtBu(result.netBushels)} bu
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function GradesDialog({
   load,
   crop,
+  siteId,
   locked,
   open,
   onOpenChange,
@@ -43,6 +93,8 @@ export function GradesDialog({
 }: {
   load: LoadRow;
   crop: string;
+  /** sheet's site — enables the schedule-driven preview (grading.preview) */
+  siteId?: number;
   /** sheet is CLOSED — the edit needs the admin password */
   locked?: boolean;
   open: boolean;
@@ -56,9 +108,12 @@ export function GradesDialog({
   const [tw, setTw] = useState(numStr(load.testWeightLbs));
   const [protein, setProtein] = useState(numStr(load.proteinPct));
   const [damage, setDamage] = useState(numStr(load.damagePct));
+  const [fm, setFm] = useState(numStr(load.foreignMaterialPct));
+  const [sb, setSb] = useState(numStr(load.sbPct));
   const [grade, setGrade] = useState(load.grade ?? "");
   const [farmOrigin, setFarmOrigin] = useState(load.farmOrigin ?? "");
   const [adminPassword, setAdminPassword] = useState("");
+  const [savedBreakdown, setSavedBreakdown] = useState<GradeAdjustmentResult | null>(null);
 
   const invalidate = () => {
     void utils.sheets.get.invalidate();
@@ -68,11 +123,18 @@ export function GradesDialog({
   };
 
   const mut = trpc.sheets.updateLoadGrades.useMutation({
-    onSuccess: () => {
-      toast.success(`Grades saved for load ${load.loadNo}`);
+    onSuccess: (data) => {
       invalidate();
-      onOpenChange(false);
+      if (data.breakdown) {
+        // show the server's authoritative shrink/dock breakdown before closing
+        setSavedBreakdown(data.breakdown);
+        toast.success(`Grades saved for load ${load.loadNo}`);
+      } else {
+        toast.success(`Grades saved for load ${load.loadNo}`);
+        onOpenChange(false);
+      }
     },
+    // grade-factor validation failures render inline below AND toast
     onError: (err) => toast.error(err.message),
   });
 
@@ -81,17 +143,35 @@ export function GradesDialog({
   const twN = parseNum(tw);
   const proteinN = parseNum(protein);
   const damageN = parseNum(damage);
+  const fmN = parseNum(fm);
+  const sbN = parseNum(sb);
   const valid =
     (moisture.trim() === "" || moistureN != null) &&
     (dockage.trim() === "" || dockageN != null) &&
     (tw.trim() === "" || twN != null) &&
     (protein.trim() === "" || proteinN != null) &&
     (damage.trim() === "" || damageN != null) &&
+    (fm.trim() === "" || fmN != null) &&
+    (sb.trim() === "" || sbN != null) &&
     (!locked || adminPassword !== "");
 
-  // live bushel preview when the load has completed weighing
-  const preview =
-    load.netLbs != null ? computeBushels(crop, load.netLbs, moistureN, dockageN) : null;
+  // live schedule-driven preview (grading.preview) — falls back to the
+  // legacy grain.ts bushel math when no siteId is available
+  const previewQ = trpc.grading.preview.useQuery(
+    {
+      siteId: siteId ?? -1,
+      crop,
+      netLbs: load.netLbs ?? 0,
+      moisturePct: moistureN,
+      dockagePct: dockageN,
+    },
+    { enabled: siteId != null && load.netLbs != null && load.netLbs > 0 && valid },
+  );
+  const schedulePreview = previewQ.data?.result ?? null;
+  const legacyPreview =
+    siteId == null && load.netLbs != null
+      ? computeBushels(crop, load.netLbs, moistureN, dockageN)
+      : null;
 
   const save = () =>
     mut.mutate({
@@ -101,6 +181,8 @@ export function GradesDialog({
       testWeightLbs: twN,
       proteinPct: proteinN,
       damagePct: damageN,
+      foreignMaterialPct: fmN,
+      sbPct: sbN,
       grade: grade.trim() || null,
       farmOrigin: farmOrigin.trim() || null,
       adminPassword: adminPassword || undefined,
@@ -137,75 +219,111 @@ export function GradesDialog({
           <DialogTitle>Grades — load {load.loadNo}</DialogTitle>
           <DialogDescription>
             All fields optional. Leave a field blank to clear it. The backend
-            recomputes bushels authoritatively.
+            recomputes shrink, dock, and bushels authoritatively from the
+            crop&apos;s grading schedule.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          {numField("g-moist", "Moisture %", moisture, setMoisture, "e.g. 17.5")}
-          {numField("g-dock", "Dockage %", dockage, setDockage, "e.g. 1.0")}
-          {numField("g-tw", "Test weight lbs", tw, setTw, "e.g. 56")}
-          {numField("g-prot", "Protein %", protein, setProtein, "optional")}
-          {numField("g-dmg", "Damage %", damage, setDamage, "optional")}
-          <div className="space-y-1">
-            <Label htmlFor="g-grade" className="text-xs">
-              Grade
-            </Label>
-            <Input
-              id="g-grade"
-              value={grade}
-              placeholder="e.g. No. 2 Yellow"
-              onChange={(e) => setGrade(e.target.value)}
-              className="h-8 font-mono text-xs"
-              maxLength={32}
-            />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="g-origin" className="text-xs">
-            Farm / field origin
-          </Label>
-          <Input
-            id="g-origin"
-            value={farmOrigin}
-            placeholder="e.g. Home farm — north 40"
-            onChange={(e) => setFarmOrigin(e.target.value)}
-            className="h-8 font-mono text-xs"
-            maxLength={255}
-          />
-        </div>
-        {preview && (
-          <div className="rounded-md border border-live/30 bg-readout p-3 font-mono text-xs text-sidebar-foreground">
-            <div className="gt-eyebrow mb-1">Live preview</div>
-            <div className="flex justify-between">
-              <span className="text-sidebar-foreground/60">Gross</span>
-              <span>{fmtBu(preview.grossBushels)} bu</span>
+
+        {savedBreakdown ? (
+          <>
+            <BreakdownPanel result={savedBreakdown} title="Saved — computed deduction" tone="saved" />
+            <DialogFooter>
+              <Button onClick={() => onOpenChange(false)}>Done</Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              {numField("g-moist", "Moisture %", moisture, setMoisture, "e.g. 17.5")}
+              {numField("g-dock", "Dockage %", dockage, setDockage, "e.g. 1.0")}
+              {numField("g-tw", "Test weight lbs", tw, setTw, "e.g. 56")}
+              {numField("g-prot", "Protein %", protein, setProtein, "optional")}
+              {numField("g-dmg", "Damage %", damage, setDamage, "optional")}
+              {numField("g-fm", "Foreign material %", fm, setFm, "optional")}
+              {numField("g-sb", "S&B %", sb, setSb, "optional")}
+              <div className="space-y-1">
+                <Label htmlFor="g-grade" className="text-xs">
+                  Grade
+                </Label>
+                <Input
+                  id="g-grade"
+                  value={grade}
+                  placeholder="e.g. No. 2 Yellow"
+                  onChange={(e) => setGrade(e.target.value)}
+                  className="h-8 font-mono text-xs"
+                  maxLength={32}
+                />
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-sidebar-foreground/60">Shrink</span>
-              <span className="text-live">{preview.shrinkPct}%</span>
+            <div className="space-y-1">
+              <Label htmlFor="g-origin" className="text-xs">
+                Farm / field origin
+              </Label>
+              <Input
+                id="g-origin"
+                value={farmOrigin}
+                placeholder="e.g. Home farm — north 40"
+                onChange={(e) => setFarmOrigin(e.target.value)}
+                className="h-8 font-mono text-xs"
+                maxLength={255}
+              />
             </div>
-            <div className="flex justify-between font-semibold">
-              <span className="text-sidebar-foreground/60">Net</span>
-              <span className="text-go">{fmtBu(preview.netBushels)} bu</span>
-            </div>
-          </div>
+
+            {mut.isError && (
+              <Alert variant="destructive">
+                <AlertTitle>Grades rejected</AlertTitle>
+                <AlertDescription className="font-mono text-xs">
+                  {mut.error.message}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {schedulePreview ? (
+              <BreakdownPanel
+                result={schedulePreview}
+                title={
+                  previewQ.data?.schedule
+                    ? `Schedule preview — ${previewQ.data.schedule.moistureShrinkPerPoint}%/pt over ${previewQ.data.schedule.baseMoisturePct}%`
+                    : "Schedule preview (default rates)"
+                }
+                tone="preview"
+              />
+            ) : legacyPreview ? (
+              <div className="rounded-md border border-live/30 bg-readout p-3 font-mono text-xs text-sidebar-foreground">
+                <div className="gt-eyebrow mb-1">Live preview</div>
+                <div className="flex justify-between">
+                  <span className="text-sidebar-foreground/60">Gross</span>
+                  <span>{fmtBu(legacyPreview.grossBushels)} bu</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sidebar-foreground/60">Shrink</span>
+                  <span className="text-live">{legacyPreview.shrinkPct}%</span>
+                </div>
+                <div className="flex justify-between font-semibold">
+                  <span className="text-sidebar-foreground/60">Net</span>
+                  <span className="text-go">{fmtBu(legacyPreview.netBushels)} bu</span>
+                </div>
+              </div>
+            ) : null}
+
+            {locked && (
+              <AdminPasswordField
+                id="grades-locked-password"
+                value={adminPassword}
+                onChange={setAdminPassword}
+                hint="This ticket is locked (closed) — editing grades requires the site admin password."
+              />
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button onClick={save} disabled={!valid || mut.isPending}>
+                {mut.isPending ? "Saving…" : "Save grades"}
+              </Button>
+            </DialogFooter>
+          </>
         )}
-        {locked && (
-          <AdminPasswordField
-            id="grades-locked-password"
-            value={adminPassword}
-            onChange={setAdminPassword}
-            hint="This ticket is locked (closed) — editing grades requires the site admin password."
-          />
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={!valid || mut.isPending}>
-            {mut.isPending ? "Saving…" : "Save grades"}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

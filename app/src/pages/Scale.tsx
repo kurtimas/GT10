@@ -10,6 +10,7 @@ import { toast } from "@shared/src/components/ui/sonner";
 import { Alert, AlertDescription, AlertTitle } from "@shared/src/components/ui/alert";
 import { QueryError } from "@shared/src/components/QueryError";
 import { GradesDialog } from "@/components/GradesDialog";
+import { SplitsDialog } from "@/components/SplitsDialog";
 import { Badge } from "@shared/src/components/ui/badge";
 import { Button } from "@shared/src/components/ui/button";
 import { Card, CardContent, CardHeader } from "@shared/src/components/ui/card";
@@ -438,11 +439,25 @@ function WeighConsole({ sheet, weightLbs, onChanged }: WeighConsoleProps) {
               {weightLbs != null ? ` — ${fmtLbs(weightLbs)} lb` : ""}
             </Button>
             {binSelect}
+            {!outbound && (
+              <BinSuggestions
+                sheet={sheet}
+                active={active}
+                onPick={(id) => setBinChoice(String(id))}
+              />
+            )}
           </>
         ) : (
           <>
             <CapturedStrip load={active} outbound={outbound} />
             {binSelect}
+            {!outbound && (
+              <BinSuggestions
+                sheet={sheet}
+                active={active}
+                onPick={(id) => setBinChoice(String(id))}
+              />
+            )}
             <Button
               className="h-14 w-full text-lg font-bold"
               disabled={!canWeigh}
@@ -476,6 +491,101 @@ function CapturedStrip({ load, outbound }: { load: LoadRow; outbound: boolean })
       <span className="font-mono text-xl font-semibold tabular-nums text-live">
         {fmtLbs(firstLbs)} lb
       </span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Segregation-aware bin suggestions (#16) — ranked candidates for an  */
+/* inbound load with reasons. Advisory only; never blocks the manual   */
+/* pick.                                                               */
+/* ------------------------------------------------------------------ */
+
+function BinSuggestions({
+  sheet,
+  active,
+  onPick,
+}: {
+  sheet: SheetRow;
+  active: LoadRow | null;
+  onPick: (binId: number) => void;
+}) {
+  const program = active?.program;
+  const moisturePct = active?.moisturePct ?? undefined;
+  const suggestQ = trpc.core.bins.suggest.useQuery(
+    {
+      siteId: sheet.siteId,
+      crop: sheet.crop,
+      ...(program ? { program } : {}),
+      ...(moisturePct != null ? { moisturePct } : {}),
+    },
+    { staleTime: 15_000 },
+  );
+
+  if (suggestQ.isError) return null; // advisory — the manual picker still works
+  const candidates = (suggestQ.data?.candidates ?? []).slice(0, 3);
+  if (candidates.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-live/30 bg-live/5 p-2.5">
+      <div className="gt-eyebrow mb-1.5">Suggested bins (advisory)</div>
+      <div className="space-y-1.5">
+        {candidates.map((c) => (
+          <div key={c.bin.id} className="flex items-start gap-2">
+            <Badge
+              variant="outline"
+              className={cn(
+                "mt-0.5 flex-none font-mono text-[10px]",
+                c.programMatch
+                  ? "border-stable/50 text-stable"
+                  : "border-crit/60 text-crit",
+              )}
+            >
+              #{c.rank}
+            </Badge>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="font-mono text-xs font-semibold">{c.bin.name}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {fmtLbs(c.capacityRemainingLbs)} lb free
+                </span>
+                {c.gradeCompatible === true && (
+                  <Badge
+                    variant="outline"
+                    className="border-stable/50 font-mono text-[9px] text-stable"
+                  >
+                    grade-compatible
+                  </Badge>
+                )}
+                {c.cleaned && (
+                  <Badge
+                    variant="outline"
+                    className="border-live/50 font-mono text-[9px] text-live"
+                  >
+                    cleaned
+                  </Badge>
+                )}
+                {c.empty && (
+                  <Badge variant="outline" className="font-mono text-[9px] text-muted-foreground">
+                    empty
+                  </Badge>
+                )}
+              </div>
+              <div className="font-mono text-[10px] text-muted-foreground">
+                {c.reasons.join(" · ")}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 flex-none px-2 font-mono text-[10px]"
+              onClick={() => onPick(c.bin.id)}
+            >
+              Use
+            </Button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -558,6 +668,7 @@ function loadTimeOf(l: LoadRow, outbound: boolean): Date {
 
 function SheetLoadsCard({ sheet }: { sheet: SheetRow }) {
   const [gradesLoad, setGradesLoad] = useState<LoadRow | null>(null);
+  const [splitsLoad, setSplitsLoad] = useState<LoadRow | null>(null);
   const outbound = sheet.direction === "OUTBOUND";
   // Newest first — the operator's eye lands on the most recent load.
   const loads = [...(sheet.loads ?? [])].sort((a, b) => b.loadNo - a.loadNo);
@@ -639,14 +750,24 @@ function SheetLoadsCard({ sheet }: { sheet: SheetRow }) {
                     </TableCell>
                     <TableCell className="text-right">
                       {!midWeigh && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2 font-mono text-[10px]"
-                          onClick={() => setGradesLoad(l)}
-                        >
-                          {l.moisturePct != null || l.grade != null ? "Grades" : "+ Grade"}
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 font-mono text-[10px]"
+                            onClick={() => setGradesLoad(l)}
+                          >
+                            {l.moisturePct != null || l.grade != null ? "Grades" : "+ Grade"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 font-mono text-[10px]"
+                            onClick={() => setSplitsLoad(l)}
+                          >
+                            Splits
+                          </Button>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
@@ -661,8 +782,17 @@ function SheetLoadsCard({ sheet }: { sheet: SheetRow }) {
           key={gradesLoad.id}
           load={gradesLoad}
           crop={sheet.crop}
+          siteId={sheet.siteId}
           open
           onOpenChange={(o) => !o && setGradesLoad(null)}
+        />
+      )}
+      {splitsLoad && (
+        <SplitsDialog
+          key={splitsLoad.id}
+          load={splitsLoad}
+          open
+          onOpenChange={(o) => !o && setSplitsLoad(null)}
         />
       )}
     </Card>

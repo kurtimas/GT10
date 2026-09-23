@@ -5,6 +5,11 @@ import { fmtBu, fmtLbs } from "@contracts/grain";
 import { AdminPasswordField } from "@/components/AdminPasswordField";
 import { useAdminGate } from "@/hooks/useAdminGate";
 import { QueryError } from "@shared/src/components/QueryError";
+import {
+  DprSection,
+  MassBalanceSection,
+  RetentionExamSection,
+} from "@/components/ComplianceReports";
 import { toast } from "@shared/src/components/ui/sonner";
 import { Button } from "@shared/src/components/ui/button";
 import {
@@ -525,6 +530,16 @@ export default function Reports() {
       </Card>
 
       <Separator />
+
+      {/* Phase C — #5 DPR, #15 mass balance, #9 retention/exam */}
+      {siteId != null && (
+        <>
+          <DprSection siteId={siteId} day={date} />
+          <MassBalanceSection siteId={siteId} />
+          <RetentionExamSection />
+          <Separator />
+        </>
+      )}
 
       {/* close day */}
       <Card className="border-destructive/40">
