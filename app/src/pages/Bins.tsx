@@ -35,6 +35,7 @@ import {
   fmtLbs,
   type Crop,
 } from "@contracts/grain";
+import { PROGRAMS, DEFAULT_PROGRAM, type Program } from "@contracts/compliance";
 import type { BinRow } from "@contracts/types";
 
 // ---------------------------------------------------------------------------
@@ -171,6 +172,7 @@ function AddBinDialog({
   );
   const [name, setName] = useState("");
   const [crop, setCrop] = useState<Crop>("Corn");
+  const [program, setProgram] = useState<Program>(DEFAULT_PROGRAM);
   const capacity = useCapacityConverter(crop);
   const [adminPassword, setAdminPassword] = useState("");
   const { passwordRequired } = useAdminGate();
@@ -210,6 +212,7 @@ function AddBinDialog({
       siteId: siteIdNum,
       name: name.trim(),
       crop,
+      program,
       capacityLbs: capacity.capacityLbs,
     });
   };
@@ -272,6 +275,24 @@ function AddBinDialog({
             </div>
           </div>
           <CapacityFields converter={capacity} />
+          <div className="space-y-1.5">
+            <Label>Program</Label>
+            <Select value={program} onValueChange={(v) => setProgram(v as Program)}>
+              <SelectTrigger aria-label="Program">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PROGRAMS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Segregation program — only matching lots should be binned here.
+            </p>
+          </div>
           <AdminPasswordField
             id="add-bin-password"
             value={adminPassword}
@@ -307,6 +328,11 @@ function EditBinDialog({
   const [crop, setCrop] = useState<Crop>(
     (CROPS as readonly string[]).includes(bin.crop) ? (bin.crop as Crop) : "Corn",
   );
+  const [program, setProgram] = useState<Program>(
+    (PROGRAMS as readonly string[]).includes(bin.program)
+      ? (bin.program as Program)
+      : DEFAULT_PROGRAM,
+  );
   const capacity = useCapacityConverter(crop, bin.capacityLbs);
   const [adminPassword, setAdminPassword] = useState("");
   const { passwordRequired } = useAdminGate();
@@ -338,6 +364,7 @@ function EditBinDialog({
       id: bin.id,
       name: name.trim(),
       crop,
+      program,
       capacityLbs: capacity.capacityLbs,
     });
   };
@@ -379,6 +406,24 @@ function EditBinDialog({
             </div>
           </div>
           <CapacityFields converter={capacity} />
+          <div className="space-y-1.5">
+            <Label>Program</Label>
+            <Select value={program} onValueChange={(v) => setProgram(v as Program)}>
+              <SelectTrigger aria-label="Program">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PROGRAMS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Segregation program — only matching lots should be binned here.
+            </p>
+          </div>
           {bin.currentLbs > 0 && capacity.capacityLbs != null && (
             <p
               className={cn(
@@ -638,13 +683,18 @@ function BinCard({
       <CardHeader className="flex-row items-start justify-between gap-2 space-y-0 pb-3">
         <div className="min-w-0">
           <CardTitle className="truncate text-base">{bin.name}</CardTitle>
-          <div className="mt-1.5">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
             <Badge
               variant="outline"
               className={cn("font-mono text-[10px] uppercase", cropBadgeClass(bin.crop))}
             >
               {bin.crop}
             </Badge>
+            {bin.program && bin.program !== "conventional" && (
+              <Badge variant="secondary" className="font-mono text-[10px]">
+                {bin.program}
+              </Badge>
+            )}
           </div>
         </div>
         <div className="flex flex-none items-center gap-1">
@@ -727,9 +777,17 @@ export default function Bins() {
   const [editBin, setEditBin] = useState<BinRow | null>(null);
   const [adjustBin, setAdjustBin] = useState<BinRow | null>(null);
   const [deleteBin, setDeleteBin] = useState<BinRow | null>(null);
+  const [programFilter, setProgramFilter] = useState("all");
 
   const sites = useMemo(() => sitesQuery.data ?? [], [sitesQuery.data]);
-  const bins = useMemo(() => binsQuery.data ?? [], [binsQuery.data]);
+  const allBins = useMemo(() => binsQuery.data ?? [], [binsQuery.data]);
+  const bins = useMemo(
+    () =>
+      programFilter === "all"
+        ? allBins
+        : allBins.filter((b) => b.program === programFilter),
+    [allBins, programFilter],
+  );
   const loading = sitesQuery.isPending || (siteId != null && binsQuery.isPending);
 
   const stats = useMemo(() => {
@@ -817,6 +875,25 @@ export default function Bins() {
             Add bin
           </Button>
         </div>
+      </div>
+
+      {/* ---- Program filter chips (#17) -------------------------------- */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="gt-eyebrow mr-1">Program</span>
+        {["all", ...PROGRAMS].map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => setProgramFilter(p)}
+            className={`rounded-full border px-2.5 py-0.5 font-mono text-[11px] transition-colors ${
+              programFilter === p
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            {p === "all" ? "All" : p}
+          </button>
+        ))}
       </div>
 
       {/* ---- Body ------------------------------------------------------- */}

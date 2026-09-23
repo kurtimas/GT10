@@ -17,6 +17,18 @@ import {
   TableRow,
 } from "@shared/src/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@shared/src/components/ui/tabs";
+import {
+  AttachmentsTab,
+  CertificatesTab,
+  CleanoutsTab,
+  DprTab,
+  FumigationsTab,
+  GradeOverridesTab,
+  GradingTab,
+  LabResultsTab,
+  ShrinkTab,
+  SplitsTab,
+} from "../components/traceTabs";
 
 function fmtDateTime(d: Date | null): string {
   if (!d) return "never";
@@ -478,16 +490,28 @@ function MovementsTab() {
 
 /**
  * Office portal home: mirrored activity across sites (overview), outbound
- * shipments, the bin-movement provenance feed, and the audit trail — all
- * read-only views over data pushed in by each scale house.
+ * shipments, the bin-movement provenance feed, the Phase-B2 traceability
+ * mirrors (DPR, certificates, lab results, fumigations, cleanouts, shrink,
+ * grade overrides, attachments, load splits, grading reference), and the
+ * audit trail — all read-only views over data pushed in by each scale house.
  */
 export default function OfficeHome() {
   return (
     <Tabs defaultValue="overview" className="space-y-4">
-      <TabsList>
+      <TabsList className="flex h-auto flex-wrap justify-start">
         <TabsTrigger value="overview">Overview</TabsTrigger>
         <TabsTrigger value="shipments">Shipments</TabsTrigger>
         <TabsTrigger value="movements">Bin movements</TabsTrigger>
+        <TabsTrigger value="dpr">DPR</TabsTrigger>
+        <TabsTrigger value="certificates">Certificates</TabsTrigger>
+        <TabsTrigger value="lab">Lab results</TabsTrigger>
+        <TabsTrigger value="fumigations">Fumigations</TabsTrigger>
+        <TabsTrigger value="cleanouts">Cleanouts</TabsTrigger>
+        <TabsTrigger value="shrink">Shrink</TabsTrigger>
+        <TabsTrigger value="overrides">Grade overrides</TabsTrigger>
+        <TabsTrigger value="attachments">Attachments</TabsTrigger>
+        <TabsTrigger value="splits">Load splits</TabsTrigger>
+        <TabsTrigger value="grading">Grading</TabsTrigger>
         <TabsTrigger value="audit">Audit log</TabsTrigger>
       </TabsList>
       <TabsContent value="overview">
@@ -498,6 +522,36 @@ export default function OfficeHome() {
       </TabsContent>
       <TabsContent value="movements">
         <MovementsTab />
+      </TabsContent>
+      <TabsContent value="dpr">
+        <DprTab />
+      </TabsContent>
+      <TabsContent value="certificates">
+        <CertificatesTab />
+      </TabsContent>
+      <TabsContent value="lab">
+        <LabResultsTab />
+      </TabsContent>
+      <TabsContent value="fumigations">
+        <FumigationsTab />
+      </TabsContent>
+      <TabsContent value="cleanouts">
+        <CleanoutsTab />
+      </TabsContent>
+      <TabsContent value="shrink">
+        <ShrinkTab />
+      </TabsContent>
+      <TabsContent value="overrides">
+        <GradeOverridesTab />
+      </TabsContent>
+      <TabsContent value="attachments">
+        <AttachmentsTab />
+      </TabsContent>
+      <TabsContent value="splits">
+        <SplitsTab />
+      </TabsContent>
+      <TabsContent value="grading">
+        <GradingTab />
       </TabsContent>
       <TabsContent value="audit">
         <AuditLogTable />
